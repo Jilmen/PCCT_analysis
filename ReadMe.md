@@ -1,11 +1,12 @@
 # Source code for the analysis of multimodal imaging of the wrist
 
-##About
-
-|Author / PhD Candidate | Jilmen Quintiens|
-|P.I.| Harry van Lenthe |
-|Department | Mechanical Engineering, Biomechanics Section|
-|Institution | KU Leuven |
+## About
+|||
+|-----------------------|-----------------|
+|**Author / PhD Candidate** | Jilmen Quintiens|
+|**P.I.**| Harry van Lenthe |
+|**Department** | Mechanical Engineering, Biomechanics Section|
+|**Institution** | KU Leuven |
 
 This Github repo provides codes used for the analysis of a multimodal image dataset of the wrist. The main goal of the dataset is to evaluate the use of Photon Counting CT in quantitative musculoskeletal imaging.
 The dataset consists of 8 speciments, of which the following scans are taken:
@@ -16,5 +17,5 @@ The dataset consists of 8 speciments, of which the following scans are taken:
 
 Data is made publicly available via: **link to be added in the near future**
 
-##Structure
+## Structure
 
