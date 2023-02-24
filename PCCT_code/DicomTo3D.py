@@ -10,20 +10,16 @@ from __future__ import print_function
 import SimpleITK as sitk
 import sys
 import os
+import argparse
 
-if len(sys.argv) == 1:
-    print("Not enough input arguments! \nUsage: python DicomTo3D.py <input_directory> <output_file> ")
-    sys.exit(1)
-elif len(sys.argv) < 3:
-    if sys.argv[1] == "--help":
-        print("script to read a series of dicom files into a volume and write the volume as a ITK compatible .mha-file.")
-        print("Usage: python DicomTo3D.py <input_directory> <output_file>")
-        sys.exit(0)
-    sys.exit(1)
-        
-data_dir = sys.argv[1]
+parser = argparse.ArgumentParser(description='script to read a series of dicom files into a volume and write the volume as a ITK compatible .mha-file.')
+parser.add_argument('-path', help='Link to directory containing dicom files', required=True)
+parser.add_argument('-out', help='Output file to be created', required=True)
+args = parser.parse_args()
+
+data_dir = args.path
 if not os.path.exists(data_dir):
-    print("ERROR: the path {} does not seem to exist".format(data_dir))
+    print(f"ERROR: the path {data_dir} does not seem to exist")
     sys.exit() 
     
 series_reader = sitk.ImageSeriesReader()
@@ -63,7 +59,7 @@ print(image3D)
 #write image
 writer = sitk.ImageFileWriter()
 writer.KeepOriginalImageUIDOn()
-writer.SetFileName(sys.argv[2])
+writer.SetFileName(args.out)
 writer.SetImageIO('MetaImageIO')
 writer.Execute(image3D)
 print("\n__________________WRITER INFO________________\n")
