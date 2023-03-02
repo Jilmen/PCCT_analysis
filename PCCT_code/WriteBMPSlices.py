@@ -31,7 +31,7 @@ def WriteBMPSlices(volume, output_folder):
     
     # zeropadding
     nb_slices = volume.GetSize()[2]
-    max_pad = len(str(nb_slices))-1
+    max_pad = len(str(nb_slices))
     zero_pad = ''
     for i in range(max_pad):
         zero_pad += '0'
