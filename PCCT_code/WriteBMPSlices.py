@@ -11,18 +11,14 @@ import os
 import numpy as np
 import argparse
 
-def Scale(volume, dtype):
-    sitk_string = 'sitkUI' + dtype[2:]  #will always be unsigned ints, so index 2 is correct
-    dtype = np.dtype(dtype)    
-    max_dtype = np.iinfo(dtype).max
-    
-    arr = sitk.GetArrayViewFromImage(volume)
-    MAX = np.max(arr)
-    MIN = np.min(arr)
-    
-    arr = max_dtype / (MIN-MAX) * (arr - MAX)
-    sitkPixelID = sitk.GetPixelIDValueFromString(sitk_string)
-    volume = sitk.Cast(volume, sitkPixelID)
+def Scale(volume, windowMin = -700, windowMax = 2550):
+    filt = sitk.IntensityWindowingImageFilter()
+    filt.SetOutputMinimum(0)
+    filt.SetOutputMaximum(255)
+    filt.SetWindowMinimum(windowMin)
+    filt.SetWindowMaximum(windowMax)
+    volume = filt.Execute(volume)
+    volume = sitk.Cast(volume, sitk.sitkUInt8)
     return volume
 
 def WriteBMPSlices(volume, output_folder):
@@ -53,24 +49,22 @@ def main():
                                          '\n If you want to write integer images to BMP, use the -rescale argument.')
     parser.add_argument('-vol', help='3D volume to be written as a series', required=True)
     parser.add_argument('-out', help='Folder to store output. If the folder does not exist, it will be created', required=True)
-    parser.add_argument('-rescale', help='Flag to rescale the image data: a constant bias will remove any negative values, and all values will be scaled linearly in the range of the desired datatype.', \
+    parser.add_argument('-rescale', help='Flag to rescale the image data. Images will be rescaled to unsigned 8bit image data.' \
+                                        '\nBy default, the windowing of the input data will be from -700HU to 2550HU (including all soft tissue and bone). If needed, these defaults can be overwritten', \
                         action='store_true', default=False)
-    parser.add_argument('-dtype', help='datatype for the rescaled image. These should be unsigned integer types!')
+    parser.add_argument('-windowMin', help='minimum value of the windowing function used when rescaling the data to uint8. Default -700HU.', default=-700)
+    parser.add_argument('-windowMax', help='minimum value of the windowing function used when rescaling the data to uint8. Default 2550HU.', default=2550)
     args = parser.parse_args()
 
     if not os.path.isfile(args.vol):
         print("ERROR: you did not specify a valid file as input volume")
     
-    elif args.rescale and (args.dtype is None or args.dtype[0] != 'u'):
-        print("ERROR: you selected to rescale the image, but did not specify a correct datatype with the -dtype flag" \
-              "\nThe compatible datatypes are uint8, uint16, uint32 or uint64.")
-    
     elif args.rescale:
-        print("Rescaling...")
+        print("Rescaling... (Warning, image wil be rescaled to uint8 datatypes and information can be lost!)")
         print("Reading in image...")
         volume = sitk.ReadImage(args.vol)
         print("Rescaling image...")
-        volume = Scale(volume, args.dtype) 
+        volume = Scale(volume, args.windowMin, args.windowMax) 
         print("Writing...")
         WriteBMPSlices(volume, args.out)
         
