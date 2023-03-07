@@ -55,19 +55,20 @@ def main():
     parser.add_argument('-outImage', help='Name of output image. If not specified, default is [image]_COGCentered')
     parser.add_argument('-outMask', help='Name of output mask. If not specified, default is [mask]_COGCentered')
    
-    outImg = parser.outImage
-    outMsk = parser.outMsk   
+    args = parser.parse_args()
+    outImg = args.outImage
+    outMsk = args.outMsk   
     if outImg is None:
-        outImg = parser.image[:-4] + '_COGCentered.mha'
+        outImg = args.image[:-4] + '_COGCentered.mha'
     if outMsk is None:
-        outMsk = parser.mask[:-4] + '_COGCentered.mha'
+        outMsk = args.mask[:-4] + '_COGCentered.mha'
         
-    if not os.path.isfile(parser.image) or not os.path.isfile(parser.mask):
+    if not os.path.isfile(args.image) or not os.path.isfile(args.mask):
         print('ERROR: you seem to have given an incorrect image and/or mask.')
     else:
         print('Reading input...')
-        img = sitk.ReadImage(parser.image)
-        msk = sitk.ReadImage(parser.mask)
+        img = sitk.ReadImage(args.image)
+        msk = sitk.ReadImage(args.mask)
         print('Done reading input')
         
         SetOrigin(img, msk, outImg, outMsk)
