@@ -38,6 +38,10 @@ def WriteVolume(slices, outputName, reference_image = None, origin = None, spaci
         print('Writing image...')
         img.SetSpacing(spacing)
         img.SetOrigin(origin)
+        
+        # check if outputName has extension already specified
+        if outputName.find('.') == -1:
+            outputName += '.mha'
         sitk.WriteImage(img, os.path.join(slices, outputName))
         print('Done!')
 
