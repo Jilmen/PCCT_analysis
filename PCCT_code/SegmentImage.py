@@ -91,6 +91,7 @@ def SegmentOtsu(parameter_file = 'default', bone = None, mask = None, reference 
         thresh = filt.GetThreshold()
         if reference is None:
             print('DSC cannot be calculated as you did not give a registered reference image in any way.')
+            dsc = 'unknown'
         else:
             dsc = DSC(segm, reference)
         
@@ -177,7 +178,7 @@ def main():
     
     else:
         if args.method == 'otsu':
-            SegmentOtsu(args.param)
+            SegmentOtsu(parameter_file = args.param)
         elif args.method == 'adaptive':
             SegmentAdaptive(args.param)
         elif args.method == 'GMM':
