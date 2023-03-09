@@ -10,6 +10,9 @@ import numpy as np
 import os
 import argparse
 import datetime
+import time
+import sys
+from tqdm import tqdm
 import matplotlib.pyplot as plt
 
 def DSC(img1, img2):
@@ -21,11 +24,22 @@ def DSC(img1, img2):
     total = np.sum(vol1) + np.sum(vol2)
     return overlap/total
 
+def WriteSegmentation(segm, bone_file, method_string):
+    
+    if bone_file == '':
+        print('ERROR: you want to save the segmented image, but did not specify a bone_file path. Hence, I do not know where the data should be stored!')
+    else:
+        output = bone_file[:-4] + '_segm' + method_string +'.mha'
+        print(f'Writing segmentation to {output}...')
+        sitk.WriteImage(segm, output)
+
 def SegmentOtsu(parameter_file = 'default', bone = None, mask = None, reference = None):
     """
     Perform Otsu thresholding. Parameters can be given in a parameter file. If not given, defaults will be used.
     If bone AND mask are also passed as an argument, they will be ignored in the parameter file. 
     Should you explicitly enter them, they should be SimpleITK images (and thus no paths)
+    
+    The function returns the segmented image and the Otsu threshold
     """
     
     # default parameters
@@ -52,9 +66,9 @@ def SegmentOtsu(parameter_file = 'default', bone = None, mask = None, reference 
                     elif param == 'nb_bins':
                         nb_bins = int(value)
                     elif param == 'WRITE_LOG':
-                        WRITE_LOG = int(value)
+                        WRITE_LOG = bool(int(value))
                     elif param == 'WRITE_SEGMENTATION':
-                        WRITE_SEGMENTATION = int(value)
+                        WRITE_SEGMENTATION = bool(int(value))
                     elif param == 'reference_file':
                         reference_file = value
                     else:
@@ -78,17 +92,12 @@ def SegmentOtsu(parameter_file = 'default', bone = None, mask = None, reference 
     filt.SetInsideValue(0)
     filt.SetOutsideValue(255)
     segm = filt.Execute(bone, mask)
-    
+    thresh = filt.GetThreshold()
+
     if WRITE_SEGMENTATION:
-        if bone_file == '':
-            print('ERROR: you want to save the segmented image, but did not specify a bone_file path. Hence, I do not know where the data should be stored!')
-        else:
-            output = bone_file[:-4] + '_segmOtsu.mha'
-            print(f'Writing segmentation to {output}...')
-            sitk.WriteImage(segm, output)
+        WriteSegmentation(segm, bone_file, 'Otsu')
     
     if WRITE_LOG:
-        thresh = filt.GetThreshold()
         if reference is None:
             print('DSC cannot be calculated as you did not give a registered reference image in any way.')
             dsc = 'unknown'
@@ -114,15 +123,164 @@ def SegmentOtsu(parameter_file = 'default', bone = None, mask = None, reference 
             log.write(f'DSC: {dsc}')
             log.close()
         
-    return segm
+    return segm, thresh
                     
             
 
 def SegmentGMM(parameter_file, ADAPTIVE):
     pass
 
-def SegmentAdaptive(parameter_file):
-    pass
+def SegmentAdaptive(parameter_file = 'default', bone = None, mask = None, reference = None):
+    """
+    Perform Otsu thresholding. Parameters can be given in a parameter file. If not given, defaults will be used.
+    If bone AND mask are also passed as an argument, they will be ignored in the parameter file. 
+    
+    Should you explicitly enter them, they should be SimpleITK images (and thus no paths).
+    To increase computation time, a rough first binarization is done with a threshold that is 50% of the Otsu threshold.
+    Adaptive segmentation is done in a spherical region, expressed in physical size (to account for non-isotropic voxels).
+    """
+    
+    # default parameters
+    bone_file = ''
+    mask_file = ''
+    reference_file = ''
+    radius = 0.1 # mm
+    adaptive_method = 'mean'
+    WRITE_LOG = 0
+    WRITE_SEGMENTATION = 0
+    PLOT_SEGMENTATION = 0
+    
+    # reading the parameter file
+    if parameter_file != 'default':
+        with open(parameter_file, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if not line.startswith('#') and '=' in line:
+                    param, value = line.split('=')
+                    param = param.strip()
+                    value = value.strip()
+                    if param == 'bone_file':
+                        bone_file = value
+                    elif param == 'mask_file':
+                        mask_file = value
+                    elif param == 'reference_file':
+                        reference_file = value
+                    elif param == 'radius':
+                        radius = float(value)
+                    elif param == 'ADAPTIVE_METHOD':
+                        adaptive_method = value
+                    elif param == 'WRITE_SEGMENTATION':
+                        WRITE_SEGMENTATION = bool(int(value))
+                    elif param == 'WRITE_LOG':
+                        WRITE_LOG = bool(int(value))
+                    else:
+                        print(f'parameter input {param} is not a valid input!')
+                        
+    if bone is None or mask is None:
+        print('Reading in image...')
+        bone = sitk.ReadImage(bone_file)
+        print('Reading in mask...')
+        mask = sitk.ReadImage(mask_file)
+    
+    if os.path.isfile(reference_file):
+        print('Reading in reference image...')
+        reference = sitk.ReadImage(reference_file)
+        
+    # Rough segmentation
+    (_, thresh) = SegmentOtsu(bone = bone, mask = mask)
+    thresh = int(thresh/2)
+    filt = sitk.BinaryThresholdImageFilter()
+    filt.SetLowerThreshold(thresh)
+    filt.SetUpperThreshold(32767) #assuming the 16int datatype
+    filt.SetInsideValue(255)
+    filt.SetOutsideValue(0)
+    segm_init = filt.Execute(bone)
+    
+    #create a sphere with 1s 
+    [dx, dy, dz] = bone.GetSpacing()
+    dd = int(np.round(radius/dz))
+    dr = int(np.round(radius/dy))
+    dc = int(np.round(radius/dx))
+
+    sphere = np.zeros((2*dd+1, 2*dr+1, 2*dc+1), dtype=bool)
+    for depth in range(2*dd+1):
+        for row in range(2*dr+1):
+            for col in range(2*dc+1):
+                d = depth - dd
+                r = row - dr
+                c = col - dc
+                
+                if (d*dz)**2 + (r*dy)**2 + (c*dx)**2 <= radius**2:
+                    sphere[depth, row, col] = 1
+       
+    # switch to array implementation
+    bone_arr = sitk.GetArrayViewFromImage(bone)
+    mask_arr = sitk.GetArrayViewFromImage(mask)
+    segm_arr = sitk.GetArrayFromImage(segm_init)
+    
+    # masking the segmentation
+    # MAKE SURE THE MASK IS COMPLETE!!! (TOO LARGE IS NOT A PROBLEM, TOO SMALL AND YOU'LL LOSE BONE VOXELS)
+    segm_arr = segm_arr * (mask_arr != 0)
+    [voxD, voxR, voxC] = np.where(segm_arr != 0)
+    nb_voxels = len(voxD)
+    
+    print(f'Determining local threshold for {nb_voxels} voxels...')
+    start_time = time.time()
+    for i in tqdm(range(nb_voxels)):
+        di, ri, ci = voxD[i], voxR[i], voxC[i]
+        tmp_part = bone_arr[di-dd:di+dd+1 , ri-dr:ri+dr+1, ci-dc:ci+dc+1] # ASSUMING SPHERE DOES NOT CROSS IMAGE BORDERS
+        tmp_part = tmp_part * sphere
+        
+        if adaptive_method == 'mean':
+            local_thresh = np.mean(tmp_part)
+        elif adaptive_method == 'median':
+            local_thresh = np.median(tmp_part)
+        elif adaptive_method == 'mean_min_max':
+            local_thresh = 0.5*np.max(tmp_part) + 0.5*np.min(tmp_part)
+        else:
+            print('ERROR: invalid adaptive method selected!')
+            sys.exit()
+        
+        if bone_arr[di, ri, ci] < local_thresh:
+            segm_arr[di, ri, ci] = 0
+    stop_time = time.time()
+    duration = round(stop_time-start_time,2)
+    
+    segm = sitk.GetImageFromArray(segm_arr)
+    segm.SetOrigin(segm_init.GetOrigin())
+    segm.SetSpacing(segm_init.GetSpacing())
+    
+    if WRITE_SEGMENTATION:
+        WriteSegmentation(segm, bone_file, 'Adaptive')
+    
+    if WRITE_LOG:
+        if reference is None:
+            print('DSC cannot be calculated as you did not give a registered reference image in any way.')
+            dsc = 'unknown'
+        else:
+            dsc = DSC(segm, reference)
+        
+        if bone_file == '':
+            print('ERROR: you want to write a log-file, but did not specify a bone_file path. Hence, I do not know where the data should be stored!')
+        else:
+            log_file = bone_file[:-4] + '_Adaptive_log.txt'
+            log = open(log_file, 'a')
+            
+            log.write('ADAPTIVE SEGMENTATION LOG FILE \n')
+            now = datetime.datetime.now()
+            log.write(f'{now}\n\n')
+            log.write('-- PARAMETER FILE --\n\n')
+            with open(parameter_file, 'r') as f:
+                for line in f:
+                    log.write(line)
+            log.write('\n\n')
+            log.write('--- END OF PARAMETER FILE ---\n\n')
+            log.write(f'Segmentation took {duration} seconds\n')
+            log.write(f'DSC: {dsc}')
+            log.close()
+    
+    return segm
+    
 
 def main():
     parser = argparse.ArgumentParser(description = \
@@ -149,8 +307,21 @@ def main():
         print("{:<25} | {d}".format("bone_file",d="Link to gray image volume to be segmented"))
         print("{:<25} | {d}".format("mask_file",d="Link to black/white mask file. Standard input is 8bit Uint"))
         print("{:<25} | {d}".format("nb_bins",d="Number of bins in the histogram for the Otsu method")) 
-        print("{:<25} | {d}".format("WRITE_LOG",d="1/0. Write a log file, including the used parameter file and the Dice Similarity of the scan to a reference image"))
-        print("{:<25} | {d}".format("WRITE_SEGMENTATION",d="1/0. Write a the segmented image as an mha file."))
+        print("{:<25} | {d}".format("WRITE_LOG",d="1/0. Write a log file, including the used parameter file, otsu threshold and the Dice Similarity of the scan to a reference image"))
+        print("{:<25} | {d}".format("WRITE_SEGMENTATION",d="1/0. Write a the segmented image as an mha file. The file is named as the input imag, with `segmOtsu` appended"))
+        print("{:<25} | {d}".format("reference_file",d="Link to registered (i.e. transformed and resampled) reference segmentation file. (If DSC is to be calculated)."))
+        print()
+        print()
+        print('--- %% ADAPTIVE %% ---')
+        print()
+        print("{:<25} | {d}".format("Parameter",d="Description"))
+        print("--------------------------------------------------------------------")
+        print("{:<25} | {d}".format("bone_file",d="Link to gray image volume to be segmented"))
+        print("{:<25} | {d}".format("mask_file",d="Link to black/white mask file. Standard input is 8bit Uint"))
+        print("{:<25} | {d}".format("radius",d="Radius of sphere to calculate local threshold")) 
+        print("{:<25} | {d}".format("ADAPTIVE_METHOD",d="mean, median or mean_min_max")) 
+        print("{:<25} | {d}".format("WRITE_LOG",d="1/0. Write a log file, including the used parameter file, otsu threshold and the Dice Similarity of the scan to a reference image"))
+        print("{:<25} | {d}".format("WRITE_SEGMENTATION",d="1/0. Write a the segmented image as an mha file. The file is named as the input imag, with `segmOtsu` appended"))
         print("{:<25} | {d}".format("reference_file",d="Link to registered (i.e. transformed and resampled) reference segmentation file. (If DSC is to be calculated)."))
         print()
         print()
@@ -192,3 +363,5 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+
