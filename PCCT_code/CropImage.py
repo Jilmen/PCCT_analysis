@@ -58,8 +58,8 @@ def main():
                                                    'Maximum positions in the mask are determined, and a margin is included.', \
                                      formatter_class=argparse.RawTextHelpFormatter)
     parser.add_argument('-image', help='input image to be cropped', required = True)
-    parser.add_argument('-margin', help='Margin beyond the extrema of the region of interest to crop. Should be specified in milimeters.', default=10)
     parser.add_argument('-mask', help='region of interest. Dimensions should match the image.', required = True)
+    parser.add_argument('-margin', help='Margin beyond the extrema of the region of interest to crop. Should be specified in milimeters.', default=10)
     parser.add_argument('-outImg', help='Name of output image. You can choose to specify a full path or just a filename.'\
                                         'In case of the latter, the files will be written in the same folder as the inputs', required = True)
     parser.add_argument('-outMask', help='Name of output mask. You can choose to specify a full path or just a filename.'\
@@ -80,7 +80,7 @@ def main():
         if args.outMask.find('/') == -1:
             # mask output has to be stored in same folder as input mask
             pos = args.mask.rfind('/')
-            outImg = args.mask[:pos+1] + args.outMask
+            outMask = args.mask[:pos+1] + args.outMask
         else: 
             # mask output is explicitly given
             outMask = args.outMask
