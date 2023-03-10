@@ -13,7 +13,7 @@ import datetime
 import time
 import sys
 from tqdm import tqdm
-import concurrent.future
+import concurrent.futures
 import matplotlib.pyplot as plt
 
 def DSC(img1, img2):
@@ -33,6 +33,33 @@ def WriteSegmentation(segm, bone_file, method_string):
         output = bone_file[:-4] + '_segm' + method_string +'.mha'
         print(f'Writing segmentation to {output}...')
         sitk.WriteImage(segm, output)
+
+def AdaptiveProcessingPixel(bone_arr, minDi, maxDi, minRi, maxRi, minCi, maxCi, sphere, adaptive_method):
+    try:
+        tmp_part = bone_arr[minDi:maxDi, minRi:maxRi, minCi:maxCi]
+        tmp_part = tmp_part * sphere
+        if adaptive_method == 'mean':
+            local_thresh = np.mean(tmp_part)
+        elif adaptive_method == 'median':
+            local_thresh = np.median(tmp_part)
+        elif adaptive_method == 'mean_min_max':
+            local_thresh = 0.5*np.max(tmp_part) + 0.5*np.min(tmp_part)
+        else:
+            raise ValueError(f'ERROR: invalid adaptive method selected! (input given is {adaptive_method}')
+            
+        
+        d = int(((maxDi - 1) + minDi) / 2)
+        r = int(((maxRi - 1) + minRi) / 2)
+        c = int(((maxCi - 1) + minCi) / 2)
+        
+        if bone_arr[d, r, c] < local_thresh:
+            print('here comes a 0')
+        else:
+            print('here comes a 1')
+    
+    except Exception as e:
+        print(f'Error processing part at indices ({minDi}:{maxDi}, {minRi}:{maxRi}, {minCi}:{maxCi}): {e}')
+        
 
 def SegmentOtsu(parameter_file = 'default', bone = None, mask = None, reference = None):
     """
@@ -125,11 +152,11 @@ def SegmentOtsu(parameter_file = 'default', bone = None, mask = None, reference 
             log.close()
         
     return segm, thresh
-                    
-            
+
 
 def SegmentGMM(parameter_file, ADAPTIVE):
     pass
+
 
 def SegmentAdaptive(parameter_file = 'default', bone = None, mask = None, reference = None):
     """
@@ -223,29 +250,25 @@ def SegmentAdaptive(parameter_file = 'default', bone = None, mask = None, refere
     # MAKE SURE THE MASK IS COMPLETE!!! (TOO LARGE IS NOT A PROBLEM, TOO SMALL AND YOU'LL LOSE BONE VOXELS)
     segm_arr = segm_arr * (mask_arr != 0)
     [voxD, voxR, voxC] = np.where(segm_arr != 0)
+    minD = voxD - dd
+    maxD = voxD + dd + 1
+    minR = voxR - dr
+    maxR = voxR + dr + 1
+    minC = voxC - dc
+    maxC = voxC + dc +1
     nb_voxels = len(voxD)
     
     print(f'Determining local threshold for {nb_voxels} voxels...')
     start_time = time.time()
-    for i in tqdm(range(nb_voxels)):
-        di, ri, ci = voxD[i], voxR[i], voxC[i]
-        tmp_part = bone_arr[di-dd:di+dd+1 , ri-dr:ri+dr+1, ci-dc:ci+dc+1] # ASSUMING SPHERE DOES NOT CROSS IMAGE BORDERS
-        tmp_part = tmp_part * sphere
-        
-        if adaptive_method == 'mean':
-            local_thresh = np.mean(tmp_part)
-        elif adaptive_method == 'median':
-            local_thresh = np.median(tmp_part)
-        elif adaptive_method == 'mean_min_max':
-            local_thresh = 0.5*np.max(tmp_part) + 0.5*np.min(tmp_part)
-        else:
-            print('ERROR: invalid adaptive method selected!')
-            sys.exit()
-        
-        if bone_arr[di, ri, ci] < local_thresh:
-            segm_arr[di, ri, ci] = 0
+    with concurrent.futures.ProcessPoolExecutor() as executor:
+        results = list(tqdm(executor.map(AdaptiveProcessingPixel,\
+                                         [bone_arr]*nb_voxels, \
+                                         minD, maxD, minR, maxR, minC, maxC, \
+                                         [sphere]*nb_voxels, [adaptive_method]*nb_voxels), total = nb_voxels))
     stop_time = time.time()
     duration = round(stop_time-start_time,2)
+    print(f'Processing took {duration} seconds')
+ 
     
     segm = sitk.GetImageFromArray(segm_arr)
     segm.SetOrigin(segm_init.GetOrigin())
