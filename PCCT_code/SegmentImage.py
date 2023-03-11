@@ -34,32 +34,39 @@ def WriteSegmentation(segm, bone_file, method_string):
         print(f'Writing segmentation to {output}...')
         sitk.WriteImage(segm, output)
 
-def AdaptiveProcessingPixel(bone_arr, minDi, maxDi, minRi, maxRi, minCi, maxCi, sphere, adaptive_method):
-    try:
-        tmp_part = bone_arr[minDi:maxDi, minRi:maxRi, minCi:maxCi]
-        tmp_part = tmp_part * sphere
-        if adaptive_method == 'mean':
-            local_thresh = np.mean(tmp_part)
-        elif adaptive_method == 'median':
-            local_thresh = np.median(tmp_part)
-        elif adaptive_method == 'mean_min_max':
-            local_thresh = 0.5*np.max(tmp_part) + 0.5*np.min(tmp_part)
-        else:
-            raise ValueError(f'ERROR: invalid adaptive method selected! (input given is {adaptive_method}')
+def DivideInSubArrays(array, nb_depth_splits, nb_row_splits, nb_col_splits):
+    sub_arrs = np.array_split(array, nb_depth_splits, axis = 0)
+    sub_arrs = [np.array_split(sub, nb_row_splits, axis = 1) for sub in sub_arrs]
+    sub_arrs = [np.array_split(subsub, nb_col_splits, axis = 2) for sub in sub_arrs for subsub in sub]
+    sub_arrs = [subsub for sub in sub_arrs for subsub in sub]
+    return sub_arrs
+    
+def AdaptiveProcessingPixel(minDi, maxDi, minRi, maxRi, minCi, maxCi, adaptive_method):
+    # try:
+    #     tmp_part = bone_arr[minDi:maxDi, minRi:maxRi, minCi:maxCi]
+    #     # tmp_part = tmp_part * sphere
+    #     if adaptive_method == 'mean':
+    #         local_thresh = np.mean(tmp_part)
+    #     elif adaptive_method == 'median':
+    #         local_thresh = np.median(tmp_part)
+    #     elif adaptive_method == 'mean_min_max':
+    #         local_thresh = 0.5*np.max(tmp_part) + 0.5*np.min(tmp_part)
+    #     else:
+    #         raise ValueError(f'ERROR: invalid adaptive method selected! (input given is {adaptive_method})')
             
         
-        d = int(((maxDi - 1) + minDi) / 2)
-        r = int(((maxRi - 1) + minRi) / 2)
-        c = int(((maxCi - 1) + minCi) / 2)
+    #     d = int(((maxDi - 1) + minDi) / 2)
+    #     r = int(((maxRi - 1) + minRi) / 2)
+    #     c = int(((maxCi - 1) + minCi) / 2)
         
-        if bone_arr[d, r, c] < local_thresh:
-            print('here comes a 0')
-        else:
-            print('here comes a 1')
+    #     if bone_arr[d, r, c] < local_thresh:
+    #         return 0
+    #     else:
+    #         return 1
     
-    except Exception as e:
-        print(f'Error processing part at indices ({minDi}:{maxDi}, {minRi}:{maxRi}, {minCi}:{maxCi}): {e}')
-        
+    # except Exception as e:
+    #     print(f'Error processing part at indices ({minDi}:{maxDi}, {minRi}:{maxRi}, {minCi}:{maxCi}): {e}')
+    pass
 
 def SegmentOtsu(parameter_file = 'default', bone = None, mask = None, reference = None):
     """
@@ -249,22 +256,39 @@ def SegmentAdaptive(parameter_file = 'default', bone = None, mask = None, refere
     # masking the segmentation
     # MAKE SURE THE MASK IS COMPLETE!!! (TOO LARGE IS NOT A PROBLEM, TOO SMALL AND YOU'LL LOSE BONE VOXELS)
     segm_arr = segm_arr * (mask_arr != 0)
+    
+    # divide arrays into smaller pieces to enable multiprocessing
+    sub_bone_arr = DivideInSubArrays(bone_arr, 2, 8, 8)
+    sub_segm_arr = DivideInSubArrays(segm_arr, 2, 8, 8)
+    
+    # to do:
+        # set segmentation voxels (that remain after 50%Otsu) to a value indicating 'not computed yet'
+        # set up the multiprocessing 
+        # in the adaptive thresholding, only treat voxels for which local region does not cross parts
+        # after multiprocessing reconstruct image to 1 array
+        # segment the remaining voxels 
+        # --> this way it eliminates the difficult task of making transition regions in the bone pieces
+    
+
     [voxD, voxR, voxC] = np.where(segm_arr != 0)
     minD = voxD - dd
     maxD = voxD + dd + 1
     minR = voxR - dr
     maxR = voxR + dr + 1
     minC = voxC - dc
-    maxC = voxC + dc +1
+    maxC = voxC + dc + 1
     nb_voxels = len(voxD)
     
     print(f'Determining local threshold for {nb_voxels} voxels...')
     start_time = time.time()
-    with concurrent.futures.ProcessPoolExecutor() as executor:
+    with concurrent.futures.ProcessPoolExecutor(initializer=InitAdaptiveProcess, initargs=(bone_arr,)) as executor:
         results = list(tqdm(executor.map(AdaptiveProcessingPixel,\
-                                         [bone_arr]*nb_voxels, \
-                                         minD, maxD, minR, maxR, minC, maxC, \
-                                         [sphere]*nb_voxels, [adaptive_method]*nb_voxels), total = nb_voxels))
+                                          minD, maxD, minR, maxR, minC, maxC, \
+                                          [adaptive_method]*nb_voxels), total = nb_voxels))
+
+    # for i in tqdm(range(nb_voxels)):
+    #     AdaptiveProcessingPixel(minD[i], maxD[i], minR[i], maxR[i], minC[i], maxC[i], adaptive_method)
+        
     stop_time = time.time()
     duration = round(stop_time-start_time,2)
     print(f'Processing took {duration} seconds')
