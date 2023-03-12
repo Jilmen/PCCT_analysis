@@ -34,39 +34,98 @@ def WriteSegmentation(segm, bone_file, method_string):
         print(f'Writing segmentation to {output}...')
         sitk.WriteImage(segm, output)
 
-def DivideInSubArrays(array, nb_depth_splits, nb_row_splits, nb_col_splits):
-    sub_arrs = np.array_split(array, nb_depth_splits, axis = 0)
-    sub_arrs = [np.array_split(sub, nb_row_splits, axis = 1) for sub in sub_arrs]
-    sub_arrs = [np.array_split(subsub, nb_col_splits, axis = 2) for sub in sub_arrs for subsub in sub]
-    sub_arrs = [subsub for sub in sub_arrs for subsub in sub]
-    return sub_arrs
+def ComputeSubArrays(inputs, nb_depth_splits, nb_row_splits, nb_col_splits, operation):
+    if operation == 'split':
+        sub_arrs = np.array_split(inputs, nb_depth_splits, axis = 0)
+        sub_arrs = [np.array_split(sub, nb_row_splits, axis = 1) for sub in sub_arrs]
+        sub_arrs = [np.array_split(subsub, nb_col_splits, axis = 2) for sub in sub_arrs for subsub in sub]
+        sub_arrs = [subsub for sub in sub_arrs for subsub in sub]
+        return sub_arrs
     
-def AdaptiveProcessingPixel(minDi, maxDi, minRi, maxRi, minCi, maxCi, adaptive_method):
-    # try:
-    #     tmp_part = bone_arr[minDi:maxDi, minRi:maxRi, minCi:maxCi]
-    #     # tmp_part = tmp_part * sphere
-    #     if adaptive_method == 'mean':
-    #         local_thresh = np.mean(tmp_part)
-    #     elif adaptive_method == 'median':
-    #         local_thresh = np.median(tmp_part)
-    #     elif adaptive_method == 'mean_min_max':
-    #         local_thresh = 0.5*np.max(tmp_part) + 0.5*np.min(tmp_part)
-    #     else:
-    #         raise ValueError(f'ERROR: invalid adaptive method selected! (input given is {adaptive_method})')
+    elif operation == 'restore':
+        # make nested list with concatenated rows
+        row_start_pos = np.arange(0, len(inputs), nb_col_splits)
+        concat_row = [np.concatenate([chunk for chunk in inputs[i:i+nb_col_splits]], axis=2) for i in row_start_pos]
+        
+        col_start_pos = np.arange(0, len(concat_row), nb_row_splits)
+        concat_col = [np.concatenate([chunk for chunk in concat_row[i:i+nb_row_splits]], axis=1) for i in col_start_pos]
+        
+        rest_arr = np.concatenate([matrix for matrix in concat_col], axis=0)
+        
+        return rest_arr
+        
+        
+        
+        
+                    
+    
+def AdaptiveProcessingPixel(bone, segm, sphere, adaptive_method, CHUNKED_DATA):
+    (Dsph, Rsph, Csph) = np.shape(sphere)
+    dd = (Dsph-1)/2
+    dr = (Rsph-1)/2
+    dc = (Csph-1)/2
+    
+    [voxD, voxR, voxC] = np.where(segm[:,:,:,1] == 0) # start from the labeled parts
+    nb_vox = len(voxD)
+    
+    if CHUNKED_DATA:
+        (Dbone, Rbone, Cbone) = np.shape(bone)       
+        for i in range(nb_vox):
+            di, ri, ci = voxD[i], voxR[i], voxC[i]
+            
+            SPHERE_FITS = (di - dd >= 0 and di + dd <= Dbone-1 and \
+                           ri - dr >= 0 and ri + dr <= Rbone-1 and \
+                           ci - dc >= 0 and ci + dc <= Cbone-1)
+            
+            if SPHERE_FITS:
+                try:
+                    tmp_part = bone[int(di-dd) : int(di+dd+1) , int(ri-dr) : int(ri+dr+1) , int(ci-dc) : int(ci+dc+1)]
+                    tmp_part = tmp_part*sphere
+                
+                    if adaptive_method == 'mean':
+                        local_thresh = np.mean(tmp_part[tmp_part!=0])
+                    elif adaptive_method == 'median':
+                        local_thresh = np.median(tmp_part[tmp_part!=0])
+                    elif adaptive_method == 'mean_min_max':
+                        local_thresh = 0.5*np.max(tmp_part) + 0.5*np.min(tmp_part)
+                    else:
+                        raise ValueError(f'ERROR: invalid adaptive method selected! (input given is {adaptive_method})')
+                    
+                    if bone[di, ri, ci] < local_thresh:
+                        segm[di, ri, ci, 0] = 0
+                    
+                    # set label segmentation to True, indicating that the voxel is computed
+                    segm[di, ri, ci, 1] = 1    
+                except Exception as e:
+                    print(f'Error processing part at indices ({di-dd}:{di+dd+1}, {ri-dr}:{ri+dr+1}, {ci-dc}:{ci+dc+1}): {e}')
             
         
-    #     d = int(((maxDi - 1) + minDi) / 2)
-    #     r = int(((maxRi - 1) + minRi) / 2)
-    #     c = int(((maxCi - 1) + minCi) / 2)
+    if not CHUNKED_DATA:
+        for i in tqdm(range(nb_vox)):
+            di, ri, ci = voxD[i], voxR[i], voxC[i]
+            try:
+                tmp_part = bone[int(di-dd) : int(di+dd+1) , int(ri-dr) : int(ri+dr+1) , int(ci-dc) : int(ci+dc+1)]
+                tmp_part = tmp_part*sphere
+            
+                if adaptive_method == 'mean':
+                    local_thresh = np.mean(tmp_part[tmp_part!=0])
+                elif adaptive_method == 'median':
+                    local_thresh = np.median(tmp_part[tmp_part!=0])
+                elif adaptive_method == 'mean_min_max':
+                    local_thresh = 0.5*np.max(tmp_part) + 0.5*np.min(tmp_part)
+                else:
+                    raise ValueError(f'ERROR: invalid adaptive method selected! (input given is {adaptive_method})')
+                
+                if bone[di, ri, ci] < local_thresh:
+                    segm[di, ri, ci, 0] = 0
+                
+                # set label segmentation to True, indicating that the voxel is computed
+                segm[di, ri, ci, 1] = 1  
+                
+            except Exception as e:
+                print(f'Error processing part at indices ({di-dd}:{di+dd+1}, {ri-dr}:{ri+dr+1}, {ci-dc}:{ci+dc+1}): {e}')
         
-    #     if bone_arr[d, r, c] < local_thresh:
-    #         return 0
-    #     else:
-    #         return 1
-    
-    # except Exception as e:
-    #     print(f'Error processing part at indices ({minDi}:{maxDi}, {minRi}:{maxRi}, {minCi}:{maxCi}): {e}')
-    pass
+    return segm
 
 def SegmentOtsu(parameter_file = 'default', bone = None, mask = None, reference = None):
     """
@@ -165,7 +224,7 @@ def SegmentGMM(parameter_file, ADAPTIVE):
     pass
 
 
-def SegmentAdaptive(parameter_file = 'default', bone = None, mask = None, reference = None):
+def SegmentAdaptive(parameter_file = 'default', bone = None, mask = None, reference = None, MULTIPROCESSING = True):
     """
     Perform Otsu thresholding. Parameters can be given in a parameter file. If not given, defaults will be used.
     If bone AND mask are also passed as an argument, they will be ignored in the parameter file. 
@@ -204,6 +263,8 @@ def SegmentAdaptive(parameter_file = 'default', bone = None, mask = None, refere
                         radius = float(value)
                     elif param == 'ADAPTIVE_METHOD':
                         adaptive_method = value
+                    elif param == 'MULTIPROCESSING':
+                        MULTIPROCESSING = bool(int(value))
                     elif param == 'WRITE_SEGMENTATION':
                         WRITE_SEGMENTATION = bool(int(value))
                     elif param == 'WRITE_LOG':
@@ -255,48 +316,52 @@ def SegmentAdaptive(parameter_file = 'default', bone = None, mask = None, refere
     
     # masking the segmentation
     # MAKE SURE THE MASK IS COMPLETE!!! (TOO LARGE IS NOT A PROBLEM, TOO SMALL AND YOU'LL LOSE BONE VOXELS)
-    segm_arr = segm_arr * (mask_arr != 0)
+    segm_arr = segm_arr * (mask_arr != 0)  
+    # extend segm_arr to a fourth dimension with labels indicating if value is treated
+    # (True indicates that no further investigation is required)
+    labels = segm_arr == 0
+    segm_arr = np.stack([segm_arr, labels], axis=-1)
     
-    # divide arrays into smaller pieces to enable multiprocessing
-    sub_bone_arr = DivideInSubArrays(bone_arr, 2, 8, 8)
-    sub_segm_arr = DivideInSubArrays(segm_arr, 2, 8, 8)
+    if MULTIPROCESSING:
+        print('Dividing the arrays into chunks for multiprocessing...')
+        # divide arrays into smaller pieces to enable multiprocessing
+        sub_bone_arr = ComputeSubArrays(bone_arr, 2, 8, 8, 'split')
+        sub_segm_arr = ComputeSubArrays(segm_arr, 2, 8, 8, 'split')
+        
+        nb_chunks = len(sub_bone_arr)
+        
+        print(f'Initiating the multiprocessing. Calculating local threhsolds for {nb_chunks} chunks in parallel...')
+        start_time = time.time()
+        with concurrent.futures.ProcessPoolExecutor() as executor:
+            results = list(tqdm(executor.map(AdaptiveProcessingPixel,\
+                                             sub_bone_arr, sub_segm_arr, [sphere]*nb_chunks,\
+                                             [adaptive_method]*nb_chunks, [True]*nb_chunks ), total=nb_chunks))
+            
+        # put chunks back to original array
+        print(f'Restoring the chunck into full array')
+        segm_arr = ComputeSubArrays(results, 2, 8, 8, 'restore')
+        
+        # segment border elements
+        nb_remaining = len(np.where(segm_arr[:,:,:,1] == 0)[0])  # count False labels, indicating not treated
+        print(f'Calculating the local threshold for {nb_remaining} border elements...')
+        segm_arr = AdaptiveProcessingPixel(bone_arr, segm_arr, sphere, adaptive_method, CHUNKED_DATA=False)
+        segm_arr = segm_arr[:,:,:,0]
     
-    # to do:
-        # set segmentation voxels (that remain after 50%Otsu) to a value indicating 'not computed yet'
-        # set up the multiprocessing 
-        # in the adaptive thresholding, only treat voxels for which local region does not cross parts
-        # after multiprocessing reconstruct image to 1 array
-        # segment the remaining voxels 
-        # --> this way it eliminates the difficult task of making transition regions in the bone pieces
-    
-
-    [voxD, voxR, voxC] = np.where(segm_arr != 0)
-    minD = voxD - dd
-    maxD = voxD + dd + 1
-    minR = voxR - dr
-    maxR = voxR + dr + 1
-    minC = voxC - dc
-    maxC = voxC + dc + 1
-    nb_voxels = len(voxD)
-    
-    print(f'Determining local threshold for {nb_voxels} voxels...')
-    start_time = time.time()
-    with concurrent.futures.ProcessPoolExecutor(initializer=InitAdaptiveProcess, initargs=(bone_arr,)) as executor:
-        results = list(tqdm(executor.map(AdaptiveProcessingPixel,\
-                                          minD, maxD, minR, maxR, minC, maxC, \
-                                          [adaptive_method]*nb_voxels), total = nb_voxels))
-
-    # for i in tqdm(range(nb_voxels)):
-    #     AdaptiveProcessingPixel(minD[i], maxD[i], minR[i], maxR[i], minC[i], maxC[i], adaptive_method)
+    if not MULTIPROCESSING:
+        nb_remaining = len(np.where(segm_arr[:,:,:,1] == 0)[0])
+        start_time = time.time()
+        print(f'Calculating the local threshold for {nb_remaining} elements...') # counting False labels, indicating not treated
+        segm_arr = AdaptiveProcessingPixel(bone_arr, segm_arr, sphere, adaptive_method, CHUNKED_DATA=False)
+        segm_arr = segm_arr[:,:,:,0]
         
     stop_time = time.time()
     duration = round(stop_time-start_time,2)
     print(f'Processing took {duration} seconds')
- 
     
     segm = sitk.GetImageFromArray(segm_arr)
     segm.SetOrigin(segm_init.GetOrigin())
     segm.SetSpacing(segm_init.GetSpacing())
+    
     
     if WRITE_SEGMENTATION:
         WriteSegmentation(segm, bone_file, 'Adaptive')
@@ -368,6 +433,7 @@ def main():
         print("{:<25} | {d}".format("mask_file",d="Link to black/white mask file. Standard input is 8bit Uint"))
         print("{:<25} | {d}".format("radius",d="Radius of sphere to calculate local threshold")) 
         print("{:<25} | {d}".format("ADAPTIVE_METHOD",d="mean, median or mean_min_max")) 
+        print("{:<25} | {d}".format("MULTIPROCESSING",d="use multiprocessing for increased computational speed. (uses overhead so only usefull for large matrix sizes)")) 
         print("{:<25} | {d}".format("WRITE_LOG",d="1/0. Write a log file, including the used parameter file, otsu threshold and the Dice Similarity of the scan to a reference image"))
         print("{:<25} | {d}".format("WRITE_SEGMENTATION",d="1/0. Write a the segmented image as an mha file. The file is named as the input imag, with `segmOtsu` appended"))
         print("{:<25} | {d}".format("reference_file",d="Link to registered (i.e. transformed and resampled) reference segmentation file. (If DSC is to be calculated)."))
@@ -410,6 +476,8 @@ def main():
 
 
 if __name__ == '__main__':
+    
+
     main()
 
 
