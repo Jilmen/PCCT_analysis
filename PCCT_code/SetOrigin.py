@@ -18,9 +18,6 @@ def SetOrigin(image, mask, outImage, outMask):
     else:
         mask_array = sitk.GetArrayFromImage(mask)
         
-        #pick arbitrary color channel (mask is white)
-        mask_array = mask_array[:,:,:,1] 
-        
         print('Locating weights...')
         (depths, rows, cols) = np.where(mask_array != 0)
         
@@ -57,7 +54,7 @@ def main():
    
     args = parser.parse_args()
     outImg = args.outImage
-    outMsk = args.outMsk   
+    outMsk = args.outMask   
     if outImg is None:
         outImg = args.image[:-4] + '_COGCentered.mha'
     if outMsk is None:
