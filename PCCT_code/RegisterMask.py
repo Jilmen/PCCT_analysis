@@ -19,9 +19,6 @@ def CalculateInertiaTensor(sitkImage):
     
     array = sitk.GetArrayFromImage(sitkImage)
     
-    # pick an arbitrary color channel
-    array = array[:,:,:,1]
-    
     print("Finding coordinates of non-empty pixels...")
     (depths,rows,cols) = np.where(array!=0)
     unique_depths = np.unique(depths)
@@ -58,11 +55,11 @@ def CalculateInertiaTensor(sitkImage):
     print(f"Izz calculated: {Izz}")
     
     Ixy = -np.sum(mass*x*y)
-    print("Ixy calculated: {Ixy}")
+    print(f"Ixy calculated: {Ixy}")
     Ixz = -np.sum(mass*x*z)
-    print("Ixz calculated: {Ixz}")
+    print(f"Ixz calculated: {Ixz}")
     Iyz = -np.sum(mass*y*z)
-    print("Iyz calculated: {Iyz}")
+    print(f"Iyz calculated: {Iyz}")
     
     I = np.array([[Ixx,Ixy,Ixz], [Ixy,Iyy,Iyz], [Ixz,Iyz,Izz]])
     Coordinates = np.array([x,y,z])
@@ -117,6 +114,7 @@ def RegisterMask(fix, mov, outputFolder, DEBUG = False, \
     
     
     # eigenvectors and -values are not automatically sorted in increasing order
+    print('start sorting...')
     Sorted = False
     while not Sorted:
         maxMOV = np.where(v_mov == np.max(v_mov))[0][0]
@@ -135,7 +133,8 @@ def RegisterMask(fix, mov, outputFolder, DEBUG = False, \
             l.remove(minMOV)
             switchEigenpairs(v_mov, w_mov, l[0], l[1])
         else:
-            switchEigenpairs(v_mov, w_mov , maxMOV, maxMOV)
+            switchEigenpairs(v_mov, w_mov , maxMOV, maxFIX)
+    print('sorting done')
     
     # eigenvectors can be inverted and corresponding vectors can thus be pointing in opposite direction
     for nbVector in range(0,2):
@@ -244,7 +243,10 @@ def RegisterMask(fix, mov, outputFolder, DEBUG = False, \
     print('Writing transformation parameter file.')
     # writing parameter file for transformation
     s = MatrixToString(Rtot)
-
+    
+    if not os.path.exists(outputFolder):
+        os.mkdir(outputFolder)
+    
     f = open(outputFolder + '/MaskRegistrationParam.txt','w')
     f.write('(Transform "AffineTransform")\n')
     f.write('(NumberOfParameters 12)\n')
