@@ -925,7 +925,6 @@ def main():
 
 
 if __name__ == '__main__':
-    segm, t = SegmentGMM(parameter_file = 'tmp/params.txt')
-    # main()
+    main()
 
 
