@@ -114,7 +114,6 @@ def RegisterMask(fix, mov, outputFolder, DEBUG = False, \
     
     
     # eigenvectors and -values are not automatically sorted in increasing order
-    print('start sorting...')
     Sorted = False
     while not Sorted:
         maxMOV = np.where(v_mov == np.max(v_mov))[0][0]
@@ -134,7 +133,6 @@ def RegisterMask(fix, mov, outputFolder, DEBUG = False, \
             switchEigenpairs(v_mov, w_mov, l[0], l[1])
         else:
             switchEigenpairs(v_mov, w_mov , maxMOV, maxFIX)
-    print('sorting done')
     
     # eigenvectors can be inverted and corresponding vectors can thus be pointing in opposite direction
     for nbVector in range(0,2):
@@ -189,7 +187,7 @@ def RegisterMask(fix, mov, outputFolder, DEBUG = False, \
         # -- Resample filter
         filt = sitk.ResampleImageFilter()
         filt.SetInterpolator(sitk.sitkNearestNeighbor)
-        filt.filtSetReferenceImage(fix)
+        filt.SetReferenceImage(fix)
         
         # -- Transformation setup
         MOV2X = sitk.AffineTransform(3)
