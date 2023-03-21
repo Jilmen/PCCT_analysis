@@ -15,15 +15,8 @@ import sys
 from tqdm import tqdm
 import concurrent.futures
 import matplotlib.pyplot as plt
-
-def DSC(img1, img2):
-    arr1 = sitk.GetArrayViewFromImage(img1)
-    arr2 = sitk.GetArrayViewFromImage(img2)
-    vol1 = arr1 != 0
-    vol2 = arr2 != 0
-    overlap = 2*np.sum(vol1 * vol2)
-    total = np.sum(vol1) + np.sum(vol2)
-    return overlap/total
+import matplotlib
+from matplotlib.widgets import Slider, Button
 
 def WriteSegmentation(segm, bone_file, method_string):
     
@@ -33,6 +26,67 @@ def WriteSegmentation(segm, bone_file, method_string):
         output = bone_file[:-4] + '_segm' + method_string +'.mha'
         print(f'Writing segmentation to {output}...')
         sitk.WriteImage(segm, output)
+
+def update(val):
+    slice_nb = int(slice_slider.val)
+    
+    for nb in range(nb_plots):
+        if not isinstance(arrays[nb], tuple):
+            ax[nb].imshow(arrays[nb][slice_nb,:,:], cmap='gray')
+                    
+        else: #overlay
+            ax[nb].imshow(arrays[nb][0][slice_nb,:,:], cmap='gray')
+            ax[nb].imshow(arrays[nb][1][slice_nb,:,:], cmap=cmap2)
+
+
+def PlotSegmentation(array_list, title_list):
+    global nb_plots
+    global ax
+    global arrays
+    global slice_slider
+    global cmap2
+    
+    arrays = array_list
+    cmap2 = matplotlib.colors.ListedColormap((['none','red'])) 
+    
+    nb_plots = len(arrays)
+    fig, ax = plt.subplots(1, nb_plots)
+    
+    for nb in range(nb_plots):
+        
+        if not isinstance(arrays[nb], tuple):
+            ax[nb].imshow(arrays[nb][0,:,:], cmap='gray')
+                    
+        else: #overlay
+            ax[nb].imshow(arrays[nb][0][0,:,:], cmap='gray')
+            ax[nb].imshow(arrays[nb][1][0,:,:], cmap=cmap2)
+        
+        ax[nb].set_title(title_list[nb])
+    
+    plt.subplots_adjust(bottom=0.25)   
+    
+    # Make a horizontal slider to control the slice nb.
+    axslice = plt.axes([0.25, 0.1, 0.65, 0.03])
+    slice_slider = Slider(
+        ax=axslice,
+        label='Slice Number',
+        valmin= 0,
+        valmax=np.shape(array_list[0])[0]-1,
+        valinit=0,
+    )
+
+    # register the update function with each slider
+    slice_slider.on_changed(update)
+    plt.show()     
+    
+def DSC(img1, img2):
+    arr1 = sitk.GetArrayViewFromImage(img1)
+    arr2 = sitk.GetArrayViewFromImage(img2)
+    vol1 = arr1 != 0
+    vol2 = arr2 != 0
+    overlap = 2*np.sum(vol1 * vol2)
+    total = np.sum(vol1) + np.sum(vol2)
+    return overlap/total
 
 def CreateSphere(dx, dy, dz, radius):
     dd = int(np.round(radius/dz))
@@ -176,6 +230,7 @@ def SegmentOtsu(parameter_file = 'default', bone = None, mask = None, reference 
     mask_file = ''
     WRITE_LOG = 0
     WRITE_SEGMENTATION = 0
+    PLOT_SEGMENTATION = 0
     reference_file = ''
     
     # reading the parameter file
@@ -198,6 +253,8 @@ def SegmentOtsu(parameter_file = 'default', bone = None, mask = None, reference 
                             WRITE_LOG = bool(int(value))
                         elif param == 'WRITE_SEGMENTATION':
                             WRITE_SEGMENTATION = bool(int(value))
+                        elif param == 'PLOT_SEGMENTATION':
+                            PLOT_SEGMENTATION = bool(int(value))
                         elif param == 'reference_file':
                             reference_file = value
                         else:
@@ -253,6 +310,11 @@ def SegmentOtsu(parameter_file = 'default', bone = None, mask = None, reference 
             log.write(f'Otsu threshold: {thresh}\n')
             log.write(f'DSC: {dsc}')
             log.close()
+    
+    if PLOT_SEGMENTATION:
+        bone_arr = sitk.GetArrayFromImage(bone)
+        segm_arr = sitk.GetArrayFromImage(segm)
+        PlotSegmentation([bone_arr, segm_arr], ['image', f'Otsu segmentation - threshold {thresh}'])
         
     return segm, thresh
 
@@ -403,6 +465,17 @@ def SegmentGMM(parameter_file = 'default', ADAPTIVE = True, bone = None, mask = 
         # -- 2) INITIAL SEGMENTATION
         otsu, t_otsu = SegmentOtsu(bone = bone, mask = mask, nb_bins = nb_bins)
         otsu_arr = sitk.GetArrayViewFromImage(otsu)
+        # median_val = np.median(bone_arr[mask_arr != 0])
+        # median_val /= 2
+        # print(f'Half the median value as model intialization: {median_val}')
+        # filt = sitk.BinaryThresholdImageFilter()
+        # filt.SetLowerThreshold(median_val)
+        # filt.SetUpperThreshold(32767) #assuming the 16int datatype
+        # filt.SetInsideValue(255)
+        # filt.SetOutsideValue(0)
+        # otsu = filt.Execute(bone)
+        # otsu_arr = sitk.GetArrayViewFromImage(otsu)
+
         
         # -- 3) INITIAL PARAMETRIZATION
         string = 'Model initialization...'
@@ -411,7 +484,8 @@ def SegmentGMM(parameter_file = 'default', ADAPTIVE = True, bone = None, mask = 
         start = time.time()
         
         (bone_z, bone_r, bone_c) = np.where(otsu_arr != 0)
-        (soft_z, soft_r, soft_c) = np.where(otsu_arr == 0)
+        softMatrix = (otsu_arr == 0) * (mask_arr != 0) # Otsu is zero AND in FOV
+        (soft_z, soft_r, soft_c) = np.where(softMatrix == True)
         
         bone_vals = bone_arr[bone_z, bone_r, bone_c]
         soft_vals = bone_arr[soft_z, soft_r, soft_c]
@@ -424,8 +498,8 @@ def SegmentGMM(parameter_file = 'default', ADAPTIVE = True, bone = None, mask = 
         sd_soft = np.std(soft_vals)
         prior_soft = len(soft_vals) / nb_vox
         
-        gauss_bone = prior_bone * 1/(sd_bone * np.sqrt(2*np.pi)) * np.exp(-(bin_centers - mean_bone)**2/(2*sd_bone**2))
-        gauss_soft = prior_soft * 1/(sd_soft * np.sqrt(2*np.pi)) * np.exp(-(bin_centers - mean_soft)**2/(2*sd_soft**2))
+        gauss_bone = prior_bone * Gaussian(bin_centers, mean_bone, sd_bone)
+        gauss_soft = prior_soft * Gaussian(bin_centers, mean_soft, sd_soft)
         
         likelihood = CalculateLogLikelihood(fov_values, mean_bone, sd_bone, prior_bone, \
                                                                 mean_soft, sd_soft, prior_soft) 
@@ -441,7 +515,7 @@ def SegmentGMM(parameter_file = 'default', ADAPTIVE = True, bone = None, mask = 
         print("{:<10} | {d}".format("mean_soft",d=round(mean_soft,2)))
         print("{:<10} | {d}".format("sd_soft",d=round(sd_soft,2)))
         print("{:<10} | {d}".format("prior_soft",d=round(prior_soft,2)))
-        print("{:<10} | {d}".format("tOtsu",d=round(t_otsu,2)))
+        # print("{:<10} | {d}".format("tOtsu",d=round(t_otsu,2)))
         if WRITE_LOG: 
             log.write(string + '\n\n')
             log.write('GMM initialization: parameters\n')
@@ -452,7 +526,7 @@ def SegmentGMM(parameter_file = 'default', ADAPTIVE = True, bone = None, mask = 
             log.write("{:<10} | {d}\n".format("mean_soft",d=round(mean_soft,2)))
             log.write("{:<10} | {d}\n".format("sd_soft",d=round(sd_soft,2)))
             log.write("{:<10} | {d}\n".format("prior_soft",d=round(prior_soft,2)))
-            log.write("{:<10} | {d}\n".format("tOtsu",d=round(t_otsu,2)))
+            # log.write("{:<10} | {d}\n".format("tOtsu",d=round(t_otsu,2)))
         
         # -- 4) ITERATION
         iteration = 0
@@ -543,6 +617,24 @@ def SegmentGMM(parameter_file = 'default', ADAPTIVE = True, bone = None, mask = 
         GMMparams.write(f't_GMM={t_GMM}')
         GMMparams.close()
     
+    
+        gauss_bone_conv = prior_bone * Gaussian(bin_centers, mean_bone, sd_bone)
+        gauss_soft_conv = prior_soft * Gaussian(bin_centers, mean_soft, sd_soft)
+        
+        if PLOT_SEGMENTATION:
+            f, ax = plt.subplots(2)
+            ax[0].plot(bin_centers, hist, 'k', label = 'normalized histogram')
+            ax[0].plot(bin_centers, gauss_bone, 'r--', label = 'initial bone model')
+            ax[0].plot(bin_centers, gauss_soft, 'g--', label = 'initial soft model')
+            ax[0].plot(bin_centers, gauss_bone + gauss_soft, 'b', label = 'intitial model histogram')
+            ax[0].legend()
+            
+            ax[1].plot(bin_centers, hist, 'k', label = 'normalized histogram')
+            ax[1].plot(bin_centers, gauss_bone_conv, 'r--', label = 'final bone model')
+            ax[1].plot(bin_centers, gauss_soft_conv, 'g--', label = 'final soft model')
+            ax[1].plot(bin_centers, gauss_bone_conv + gauss_soft_conv, 'b', label = 'final model histogram')
+            ax[1].legend()
+        
     else:
         if mean_bone is None or mean_soft is None or sd_bone is None or sd_soft is None \
             or prior_bone is None or prior_soft is None:
@@ -593,7 +685,7 @@ def SegmentGMM(parameter_file = 'default', ADAPTIVE = True, bone = None, mask = 
     # masking the segmentation
     # MAKE SURE THE MASK IS COMPLETE!!! (TOO LARGE IS NOT A PROBLEM, TOO SMALL AND YOU'LL LOSE BONE VOXELS)
     segm_arr *= (mask_arr != 0)  
-
+    orig_arr = np.copy(segm_arr)
     if ADAPTIVE:
         
         # certainly bone: Pbone >= certain_bone_factor * Psoft
@@ -659,6 +751,11 @@ def SegmentGMM(parameter_file = 'default', ADAPTIVE = True, bone = None, mask = 
         string = f'Adaptive thresholding done. (Computed {round(end-start,2)} seconds)'
         print(string)
         if WRITE_LOG: log.write(string + '\n')
+        
+        if PLOT_SEGMENTATION:
+            uncertain = (certain_labels == 0)
+            PlotSegmentation([bone_arr, orig_arr, (orig_arr,uncertain), segm_arr], ['image', f'GMM - threhs {round(t_GMM)}', 'Uncertain voxels', 'GMM-adaptive'])
+            
     
     segm_GMM = sitk.GetImageFromArray(segm_arr)
     segm_GMM.SetSpacing(bone.GetSpacing())
@@ -677,6 +774,10 @@ def SegmentGMM(parameter_file = 'default', ADAPTIVE = True, bone = None, mask = 
             dsc = DSC(segm_GMM, reference)
         log.write(f'DSC = {dsc}\n\n')        
         log.close()
+    
+    if PLOT_SEGMENTATION and not ADAPTIVE:
+        PlotSegmentation([bone_arr, segm_arr], ['image', f'GMM segmentation - threshold {t_GMM}'])
+        
     return segm_GMM, t_GMM
 
 
@@ -839,6 +940,9 @@ def SegmentAdaptive(parameter_file = 'default', bone = None, mask = None, refere
             log.write(f'Segmentation took {duration} seconds\n')
             log.write(f'DSC: {dsc}')
             log.close()
+            
+    if PLOT_SEGMENTATION:
+        PlotSegmentation([bone_arr, segm_arr], ['image', f'Adaptive segmentation - {adaptive_method} method'])
     
     return segm
     
@@ -847,14 +951,14 @@ def main():
     parser = argparse.ArgumentParser(description = \
                                      'Script to segment SimpleITK images. Currently implemented methods:\n' \
                                      '-Otsu --> single threshold\n' \
-                                     '-Gaussian Mixture Model --> single threshold\n' \
                                      '-Adaptive --> local threshold\n' \
+                                     '-Gaussian Mixture Model --> single threshold\n' \
                                      '-Gaussian Mixture Model with adaptive in uncertainty\n\n'\
                                      'Because of the large amount of parameters, varying with each segmentation scheme, you should input them in a seperate txt-file.\n'\
                                      'Run >>> SegmentImage.py -list for an overview of all parameters',
                                      formatter_class=argparse.RawTextHelpFormatter)
     parser.add_argument('-list', help='Give an overview of parameters for each segmentation algorithm, and exit the program', action='store_true', default=False)
-    parser.add_argument('-method', help='Segmentation algorithm. Specify by keyword otsu , adaptive, GMM or GGM_adaptive')
+    parser.add_argument('-method', help='Segmentation algorithm. Specify by keyword otsu , adaptive, or GMM')
     parser.add_argument('-param', help='Path to parameter txt file')
     
     args = parser.parse_args()
@@ -869,7 +973,8 @@ def main():
         print("{:<25} | {d}".format("mask_file",d="Link to black/white mask file. Standard input is 8bit Uint"))
         print("{:<25} | {d}".format("nb_bins",d="Number of bins in the histogram for the Otsu method")) 
         print("{:<25} | {d}".format("WRITE_LOG",d="1/0. Write a log file, including the used parameter file, otsu threshold and the Dice Similarity of the scan to a reference image"))
-        print("{:<25} | {d}".format("WRITE_SEGMENTATION",d="1/0. Write a the segmented image as an mha file. The file is named as the input imag, with `segmOtsu` appended"))
+        print("{:<25} | {d}".format("WRITE_SEGMENTATION",d="1/0. Write a the segmented image as an mha file. The file is named as the input image, with `segmOtsu` appended"))
+        print("{:<25} | {d}".format("PLOT_SEGMENTATION",d="1/0. Plot original and segmented image in a slicer window."))
         print("{:<25} | {d}".format("reference_file",d="Link to registered (i.e. transformed and resampled) reference segmentation file. (If DSC is to be calculated)."))
         print()
         print()
@@ -879,11 +984,11 @@ def main():
         print("--------------------------------------------------------------------")
         print("{:<25} | {d}".format("bone_file",d="Link to gray image volume to be segmented"))
         print("{:<25} | {d}".format("mask_file",d="Link to black/white mask file. Standard input is 8bit Uint"))
-        print("{:<25} | {d}".format("radius",d="Radius of sphere to calculate local threshold")) 
+        print("{:<25} | {d}".format("radius",d="Radius of sphere to calculate local threshold, expressed in milimeters")) 
         print("{:<25} | {d}".format("ADAPTIVE_METHOD",d="mean, median or mean_min_max")) 
         print("{:<25} | {d}".format("MULTIPROCESSING",d="use multiprocessing for increased computational speed. (uses overhead so only usefull for large matrix sizes)")) 
-        print("{:<25} | {d}".format("WRITE_LOG",d="1/0. Write a log file, including the used parameter file, otsu threshold and the Dice Similarity of the scan to a reference image"))
-        print("{:<25} | {d}".format("WRITE_SEGMENTATION",d="1/0. Write a the segmented image as an mha file. The file is named as the input imag, with `segmAdatpive` appended"))
+        print("{:<25} | {d}".format("WRITE_LOG",d="1/0. Write a log file, including the used parameter file and the Dice Similarity of the scan to a reference image"))
+        print("{:<25} | {d}".format("WRITE_SEGMENTATION",d="1/0. Write a the segmented image as an mha file. The file is named as the input image, with `segmAdatpive` appended"))
         print("{:<25} | {d}".format("reference_file",d="Link to registered (i.e. transformed and resampled) reference segmentation file. (If DSC is to be calculated)."))
         print()
         print()
@@ -893,34 +998,35 @@ def main():
         print("--------------------------------------------------------------------")
         print("{:<25} | {d}".format("bone_file",d="Link to gray image volume to be segmented"))
         print("{:<25} | {d}".format("mask_file",d="Link to black/white mask file. Standard input is 8bit Uint"))
-        print("{:<25} | {d}".format("CALIBRATE_MODEL",d="1/0. Whether or not program calculates GMM parameters, or segments the bone with the already calculated GMM parameters."))
-        print("{:<25} | {d}".format("PLOT_SEGMENTATIONS",d="1/0. Plot Otsu, GMM with uncertainty in slicer. Ignored if Calibrate mode is on."))
-        print("{:<25} | {d}".format("REDUCED_SAMPLING",d="1/0. Whether or not to estimate GMM with reduced number of voxels in FOV (mask)"))
-        print("{:<25} | {d}".format("REDUCED_CRITERION",d="1/0. Whether or not to calculate log likelihood (optimizer) on same reduced set of voxels."))
-        print("{:<25} | {d}".format("ADAPTIVE_METHOD",d="gaussian, mean, median or mean_min_max"))
-        print("{:<25} | {d}".format("nb_bins",d="number of histogram bins to model Gaussian functions to"))
+        print("{:<25} | {d}".format("nb_bins",d="number of histogram bins the Gaussian functions will model"))
         print("{:<25} | {d}".format("max_iterations",d="maximum iterations of log likelihood maximization"))
-        print("{:<25} | {d}".format("epsilon",d="Convergence criterion: iteration stopped if L_n - L_n-1 < eps"))
+        print("{:<25} | {d}".format("epsilon",d="Convergence criterion: iteration stopped if L_n - L_n-1 < epsilon"))
+        print("{:<25} | {d}".format("CALIBRATE_MODEL",d="1/0. Whether or not program calculates GMM parameters, or directly segments the bone with the already calculated GMM parameters." ))
+        print("{:<25} | {d}".format(" ",d="If True, the parameters are stored in a txt file. If False, the txt file with parameters has to exist." ))                                    
+        print("{:<25} | {d}".format("REDUCED_SAMPLING",d="1/0. Whether or not to estimate GMM with reduced number of voxels in FOV (mask)"))
         print("{:<25} | {d}".format("nb_samples",d="number of samples if reduced sampling mode is on"))
-        print("{:<25} | {d}".format("WRITE_GMM",d="1/0. Whether or not to write GMM segmentation volume to file"))
+        print("{:<25} | {d}".format("ADAPTIVE",d="1/0. Whether or not to use adaptive thresholding in the uncertain voxels"))
+        print("{:<25} | {d}".format("ADAPTIVE_METHOD",d="gaussian, mean, median or mean_min_max"))
+        print("{:<25} | {d}".format("radius",d="Radius of sphere to calculate local threshold, expressed in milimeters")) 
+        print("{:<25} | {d}".format("certain_bone_fact",d="Bone voxel is uncertain if Pbone < factor * Psoft")) 
+        print("{:<25} | {d}".format("certain_soft_fact",d="Non-bone voxel is uncertain if Psoft < factor * Pbone")) 
+        print("{:<25} | {d}".format("WRITE_LOG",d="1/0. Write a log file, including the used parameter file, the single threshold and the Dice Similarity of the scan to a reference image"))
+        print("{:<25} | {d}".format("WRITE_SEGMENTATION",d="1/0. Write a the segmented image as an mha file. The file is named as the input image, with `segmGMM` or `segmGMMadaptive` appended"))
+        print("{:<25} | {d}".format("PLOT_SEGMENTATION",d="1/0. Plot original and segmented image in a slicer window."))
         print("{:<25} | {d}".format("reference_file",d="Link to registered (i.e. transformed and resampled) reference segmentation file. (If DSC is to be calculated)."))
 
-    
-
     elif not os.path.isfile(args.param):
-        print('ERROR: you did not specify a valid parameter file')
+        raise NameError('ERROR: you did not specify a valid parameter file')
     
     else:
-        if args.method == 'otsu':
+        if args.method == 'otsu' or args.method == 'Otsu':
             SegmentOtsu(parameter_file = args.param)
         elif args.method == 'adaptive':
-            SegmentAdaptive(args.param)
+            SegmentAdaptive(parameter_file = args.param)
         elif args.method == 'GMM':
-            SegmentGMM(args.param, ADAPTIVE = False)
-        elif args.method == 'GMM_adaptive':
-            SegmentGMM(args.param, ADAPTIVE = True)
+            SegmentGMM(parameter_file = args.param)
         else:
-            print('ERROR: you did not specify a valid segmentation method')
+            raise NameError('ERROR: you did not specify a valid segmentation method')
     
 
 
