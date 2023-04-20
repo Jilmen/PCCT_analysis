@@ -10,6 +10,103 @@ import os
 import numpy as np
 import argparse
 import sys
+import matplotlib.pyplot as plt
+from matplotlib.widgets import Slider, Button
+
+def update_axial(val):
+    slice_nb = int(slice_slider1.val)
+    ax[0].imshow(arr[slice_nb,:,:], cmap='gray')
+    
+def update_sagital(val):
+    slice_nb = int(slice_slider2.val)
+    ax[1].imshow(arr[:,slice_nb,:], cmap='gray')
+
+def onclick(event):
+    if event.inaxes == ax[0] and len(coords_axial) != 4:
+        ix, iy = event.xdata, event.ydata
+        coords_axial.append((ix,iy))
+        print(f'{ix} , {iy}')
+    
+    elif event.inaxes == ax[1] and len(coords_sagital) != 2:
+        iz = event.ydata
+        coords_sagital.append(iz)
+        print(f'{iz}')
+
+def getCoordinates():    
+    global coords_axial
+    global coords_sagital
+    global fig
+    global ax
+    global slice_slider1
+    global slice_slider2
+
+    coords_axial = []
+    coords_sagital = []
+    
+    fig, ax = plt.subplots(1, 2)
+    ax[0].imshow(arr[0,:,:], cmap='gray')
+    ax[0].set_title('click on 4 bounding coordinates')
+    ax[1].imshow(arr[:,0,:], cmap='gray')
+    ax[1].set_title('click on the remaining 2 bounding coordinates (height)')
+    
+    plt.subplots_adjust(bottom=0.25)   
+     # Make a horizontal slider to control the slice nb.
+    axslice1 = plt.axes([0.25, 0.1, 0.65, 0.03])
+    slice_slider1 = Slider(
+         ax=axslice1,
+         label='Axial',
+         valmin= 0,
+         valmax=np.shape(arr)[0]-1,
+         valinit=0,
+     )
+    axslice2 = plt.axes([0.25, 0.02, 0.65, 0.03])
+    slice_slider2 = Slider(
+         ax=axslice2,
+         label='Sagital',
+         valmin= 0,
+         valmax=np.shape(arr)[1]-1,
+         valinit=0,
+     )
+    
+     # register the update function with each slider
+    slice_slider1.on_changed(update_axial)
+    slice_slider2.on_changed(update_sagital)
+    cid = fig.canvas.mpl_connect('button_press_event', onclick)
+    plt.show() 
+    
+    while len(coords_axial) < 4 or len(coords_sagital) < 2:
+        plt.pause(0.1)
+        
+    fig.canvas.mpl_disconnect(cid)
+    plt.close('all')
+    return coords_axial, coords_sagital
+
+def CropImageManually(image, WRITE_IMAGE = False, outIm = ''):
+    global arr
+   
+    arr = sitk.GetArrayViewFromImage(image)
+
+    axial, sagital = getCoordinates()
+    rows = [int(i[1]) for i in axial]
+    cols = [int(i[0]) for i in axial]
+    depths = [int(i) for i in sagital]
+    
+    min_r, max_r = min(rows), max(rows)
+    min_c, max_c = min(cols), max(cols)
+    min_d, max_d = min(depths), max(depths)
+    
+    out_arr = arr[min_d:max_d , min_r:max_r , min_c:max_c]
+    out_im = sitk.GetImageFromArray(out_arr)
+    
+    out_im.SetOrigin(image.GetOrigin())
+    out_im.SetSpacing(image.GetSpacing())
+
+    if WRITE_IMAGE:
+        print(f'Writing image to {outIm}...')
+        sitk.WriteImage(out_im, outIm)
+    
+    return out_im
+
 
 def CropImage(image, roi, margin, WRITE_IMAGE = False, outIm = '', outROI = ''):
     """
@@ -59,6 +156,7 @@ def main():
                                                    'Maximum positions in the mask are determined, and a margin is included.', \
                                      formatter_class=argparse.RawTextHelpFormatter)
     parser.add_argument('-image', help='input image to be cropped', required = True)
+    parser.add_argument('-manual', help='manually select a boundary box in the image. You only have to provide the input image and output image name', action='store_true', default=False)
     parser.add_argument('-mask', help='region of interest. Dimensions should match the image. You can enter multiple ROIs, but give the same amount of output names', nargs='+')
     parser.add_argument('-margin', help='Margin beyond the extrema of the region of interest to crop. Should be specified in milimeters.', default=10)
     parser.add_argument('-outImg', help='Name of output image. You can choose to specify a full path or just a filename.'\
@@ -69,62 +167,77 @@ def main():
     
     # check if input image exists
     if not os.path.exists(args.image):
-        print('ERROR: you did not specify a valid image')
-        sys.exit()
+        raise ValueError('ERROR: you did not specify a valid image')
+        
         
     #base strings of image and mask
     pos = args.image.rfind('/')
     base_im = args.image[:pos+1]
     
-    # if one ROI is given, put in tuple for uniform handling
-    if not isinstance(args.mask, list) and not isinstance(args.outMask, list) and not isinstance(args.outImg, list):
-        set_masks = [args.mask]
-        set_outMasks = [args.outMask]
-        set_outImgs = [args.outImg]
-    
-    else:
-        if len(args.mask) != len(args.outMask) or len(args.mask) != len(args.outImg):
-            print('ERROR: you specified a list with multiple ROIs, but not the same number of output names.')
-            sys.exit()
-        else:
-            set_masks = args.mask
-            set_outMasks = args.outMask
-            set_outImgs = args.outImg
-            print(f'{len(set_masks)} mask files are given as input')
-            
-    print('Reading image...')
-    img = sitk.ReadImage(args.image)
-    
-    for mask_nb in range(len(set_masks)):
-        mask = set_masks[mask_nb]
-        outMask = set_outMasks[mask_nb]
-        outImg = set_outImgs[mask_nb]
-        print(f'mask {mask_nb+1}/{len(set_masks)}')
+    if args.manual:
+        print('Reading image...')
+        im = sitk.ReadImage(args.image)
+        outImg = args.outImg
+        if outImg.find('/') == -1:
+            # image output has to be stored in same folder as input image
+            outImg = base_im + outImg
+        if outImg.find('.') == -1:
+            outImg += '.mha'
+        
+        CropImageManually(im, WRITE_IMAGE = True, outIm = outImg)
         
     
-        if not os.path.isfile(mask):
-            print(f'{mask} is not a valid file. Skipping this mask.')
-            
+    else:
+    
+        # if one ROI is given, put in tuple for uniform handling
+        if not isinstance(args.mask, list) and not isinstance(args.outMask, list) and not isinstance(args.outImg, list):
+            set_masks = [args.mask]
+            set_outMasks = [args.outMask]
+            set_outImgs = [args.outImg]
+        
         else:
-            if outImg.find('/') == -1:
-                # image output has to be stored in same folder as input image
-                outImg = base_im + outImg
+            if len(args.mask) != len(args.outMask) or len(args.mask) != len(args.outImg):
+                print('ERROR: you specified a list with multiple ROIs, but not the same number of output names.')
+                sys.exit()
+            else:
+                set_masks = args.mask
+                set_outMasks = args.outMask
+                set_outImgs = args.outImg
+                print(f'{len(set_masks)} mask files are given as input')
                 
-            if outMask.find('/') == -1:
-                # mask output has to be stored in same folder as input image
-                pos = mask.rfind('/')
-                outMask = mask[:pos+1] + outMask
+        print('Reading image...')
+        img = sitk.ReadImage(args.image)
+        
+        for mask_nb in range(len(set_masks)):
+            mask = set_masks[mask_nb]
+            outMask = set_outMasks[mask_nb]
+            outImg = set_outImgs[mask_nb]
+            print(f'mask {mask_nb+1}/{len(set_masks)}')
             
-            # check if extension is explicitly mentioned
-            if outImg.find('.') == -1:
-                outImg += '.mha'
-            if outMask.find('.') == -1:
-                outMask += '.mha'
-
-            print('Reading mask...')
-            mask = sitk.ReadImage(mask)
-            
-            CropImage(img, mask, float(args.margin), WRITE_IMAGE = True, outIm = outImg, outROI = outMask)
+        
+            if not os.path.isfile(mask):
+                print(f'{mask} is not a valid file. Skipping this mask.')
+                
+            else:
+                if outImg.find('/') == -1:
+                    # image output has to be stored in same folder as input image
+                    outImg = base_im + outImg
+                    
+                if outMask.find('/') == -1:
+                    # mask output has to be stored in same folder as input image
+                    pos = mask.rfind('/')
+                    outMask = mask[:pos+1] + outMask
+                
+                # check if extension is explicitly mentioned
+                if outImg.find('.') == -1:
+                    outImg += '.mha'
+                if outMask.find('.') == -1:
+                    outMask += '.mha'
+    
+                print('Reading mask...')
+                mask = sitk.ReadImage(mask)
+                
+                CropImage(img, mask, float(args.margin), WRITE_IMAGE = True, outIm = outImg, outROI = outMask)
 
 if __name__ == '__main__':
     main()
