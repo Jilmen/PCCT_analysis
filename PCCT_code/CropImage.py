@@ -9,7 +9,6 @@ import SimpleITK as sitk
 import os
 import numpy as np
 import argparse
-import sys
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider, Button
 
@@ -21,6 +20,24 @@ def update_sagital(val):
     slice_nb = int(slice_slider2.val)
     ax[1].imshow(arr[:,slice_nb,:], cmap='gray')
 
+def button_press(event):
+    if event.inaxes == axbut1:
+        coords_axial.clear()
+        coords_axial.append((0,0))
+        coords_axial.append((0,np.shape(arr)[1]))
+        coords_axial.append((np.shape(arr)[2], 0))
+        coords_axial.append((np.shape(arr)[2], np.shape(arr)[1]))
+        print(f'default values axial bounding box \n {coords_axial}')
+        
+    elif event.inaxes == axbut2:
+        coords_sagital.clear()
+        coords_sagital.append(0)
+        coords_sagital.append(np.shape(arr)[0])
+        print(f'default values sagital bounding box \n {coords_sagital}')
+    
+    # handling the difference Spyder and command line execution
+    check_close()
+    
 def onclick(event):
     if event.inaxes == ax[0] and len(coords_axial) != 4:
         ix, iy = event.xdata, event.ydata
@@ -31,12 +48,21 @@ def onclick(event):
         iz = event.ydata
         coords_sagital.append(iz)
         print(f'{iz}')
+    
+    # handling the difference Spyder and command line execution
+    check_close()
+
+def check_close():
+    if len(coords_axial) == 4 and len(coords_sagital) == 2:
+        plt.close('all')
 
 def getCoordinates():    
     global coords_axial
     global coords_sagital
     global fig
     global ax
+    global axbut1
+    global axbut2
     global slice_slider1
     global slice_slider2
 
@@ -51,7 +77,7 @@ def getCoordinates():
     
     plt.subplots_adjust(bottom=0.25)   
      # Make a horizontal slider to control the slice nb.
-    axslice1 = plt.axes([0.25, 0.1, 0.65, 0.03])
+    axslice1 = plt.axes([0.25, 0.1, 0.4, 0.03])
     slice_slider1 = Slider(
          ax=axslice1,
          label='Axial',
@@ -59,7 +85,7 @@ def getCoordinates():
          valmax=np.shape(arr)[0]-1,
          valinit=0,
      )
-    axslice2 = plt.axes([0.25, 0.02, 0.65, 0.03])
+    axslice2 = plt.axes([0.25, 0.02, 0.4, 0.03])
     slice_slider2 = Slider(
          ax=axslice2,
          label='Sagital',
@@ -67,6 +93,13 @@ def getCoordinates():
          valmax=np.shape(arr)[1]-1,
          valinit=0,
      )
+    axbut1 = plt.axes([0.7, 0.1, 0.15, 0.07])
+    button1 = Button(axbut1, 'Defaults')
+    axbut2 = plt.axes([0.7, 0.02, 0.15, 0.07])
+    button2 = Button(axbut2, 'Defaults')
+    
+    button1.on_clicked(button_press)
+    button2.on_clicked(button_press)
     
      # register the update function with each slider
     slice_slider1.on_changed(update_axial)
@@ -74,22 +107,30 @@ def getCoordinates():
     cid = fig.canvas.mpl_connect('button_press_event', onclick)
     plt.show() 
     
+    # command line execution pauses here automatically
+    # Spyder execution does not pause here automatically
+   
+    # handling the Spyder execution  
     while len(coords_axial) < 4 or len(coords_sagital) < 2:
-        plt.pause(0.1)
-        
+         plt.pause(0.1)
+    
+    check_close()
     fig.canvas.mpl_disconnect(cid)
-    plt.close('all')
-    return coords_axial, coords_sagital
+    print('Bounding box completed')
+     
+    
 
 def CropImageManually(image, WRITE_IMAGE = False, outIm = ''):
     global arr
    
     arr = sitk.GetArrayViewFromImage(image)
 
-    axial, sagital = getCoordinates()
-    rows = [int(i[1]) for i in axial]
-    cols = [int(i[0]) for i in axial]
-    depths = [int(i) for i in sagital]
+    getCoordinates()
+
+
+    rows = [int(i[1]) for i in coords_axial]
+    cols = [int(i[0]) for i in coords_axial]
+    depths = [int(i) for i in coords_sagital]
     
     min_r, max_r = min(rows), max(rows)
     min_c, max_c = min(cols), max(cols)
@@ -104,6 +145,7 @@ def CropImageManually(image, WRITE_IMAGE = False, outIm = ''):
     if WRITE_IMAGE:
         print(f'Writing image to {outIm}...')
         sitk.WriteImage(out_im, outIm)
+        print('Done')
     
     return out_im
 
@@ -175,9 +217,10 @@ def main():
     base_im = args.image[:pos+1]
     
     if args.manual:
+        print('Manually cropping image')
         print('Reading image...')
         im = sitk.ReadImage(args.image)
-        outImg = args.outImg
+        outImg = args.outImg[0]
         if outImg.find('/') == -1:
             # image output has to be stored in same folder as input image
             outImg = base_im + outImg
@@ -188,22 +231,14 @@ def main():
         
     
     else:
-    
-        # if one ROI is given, put in tuple for uniform handling
-        if not isinstance(args.mask, list) and not isinstance(args.outMask, list) and not isinstance(args.outImg, list):
-            set_masks = [args.mask]
-            set_outMasks = [args.outMask]
-            set_outImgs = [args.outImg]
-        
-        else:
-            if len(args.mask) != len(args.outMask) or len(args.mask) != len(args.outImg):
-                print('ERROR: you specified a list with multiple ROIs, but not the same number of output names.')
-                sys.exit()
-            else:
-                set_masks = args.mask
-                set_outMasks = args.outMask
-                set_outImgs = args.outImg
-                print(f'{len(set_masks)} mask files are given as input')
+
+        if len(args.mask) != len(args.outMask) or len(args.mask) != len(args.outImg):
+            raise ValueError('ERROR: you specified a list with multiple ROIs, but not the same number of output names.')
+            
+        set_masks = args.mask
+        set_outMasks = args.outMask
+        set_outImgs = args.outImg
+        print(f'{len(set_masks)} mask files are given as input')
                 
         print('Reading image...')
         img = sitk.ReadImage(args.image)
@@ -242,17 +277,4 @@ def main():
 if __name__ == '__main__':
     main()
         
-        
-            
-            
-            
-        
-    
-    
-    
-    
-    
-    
-    
-    
-    
+     
