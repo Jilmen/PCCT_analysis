@@ -52,8 +52,8 @@ def main():
     parser.add_argument('-rescale', help='Flag to rescale the image data. Images will be rescaled to unsigned 8bit image data.' \
                                         '\nBy default, the windowing of the input data will be from -700HU to 2550HU (including all soft tissue and bone). If needed, these defaults can be overwritten', \
                         action='store_true', default=False)
-    parser.add_argument('-windowMin', help='minimum value of the windowing function used when rescaling the data to uint8. Default -700HU.', default=-700)
-    parser.add_argument('-windowMax', help='minimum value of the windowing function used when rescaling the data to uint8. Default 2550HU.', default=2550)
+    parser.add_argument('-windowMin', help='minimum value of the windowing function used when rescaling the data to uint8. Default -700HU.', default='-700')
+    parser.add_argument('-windowMax', help='minimum value of the windowing function used when rescaling the data to uint8. Default 2550HU.', default='2550')
     args = parser.parse_args()
 
     if not os.path.isfile(args.vol):
@@ -64,7 +64,7 @@ def main():
         print("Reading in image...")
         volume = sitk.ReadImage(args.vol)
         print("Rescaling image...")
-        volume = Scale(volume, args.windowMin, args.windowMax) 
+        volume = Scale(volume, int(args.windowMin), int(args.windowMax)) 
         print("Writing...")
         WriteBMPSlices(volume, args.out)
         

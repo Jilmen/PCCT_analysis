@@ -1,5 +1,7 @@
 command_lines/ 
 batman_lists/
 PCCT_code/__pycache__/
+PCCT_code/ad_hoc/
 PCCT_code/tmp/
-tasklist_microCT.xlsx
+tasklists/
+ORMIR_XCT

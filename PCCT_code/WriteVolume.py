@@ -18,7 +18,7 @@ def WriteVolume(slices, outputName, reference_image = None, origin = None, spaci
     """
     
     if reference_image is None and (origin is None or spacing is None):
-        print('ERROR: you did not specify a reference image or a complete set of metadata (origin and spacing)')
+        raise RuntimeError('ERROR: you did not specify a reference image or a complete set of metadata (origin and spacing)')
     
     else:
         if reference_image is not None:
@@ -27,7 +27,7 @@ def WriteVolume(slices, outputName, reference_image = None, origin = None, spaci
         
         print('Reading in slices...')
         file_names = os.listdir(slices)
-        files = [os.path.join(slices, i) for i in file_names if i[-3:] == 'bmp']
+        files = [os.path.join(slices, i) for i in file_names if i[-3:] == 'bmp' and 'spr' not in i]
         print(f'{len(files)} files found in directory {slices}')
         
         reader = sitk.ImageSeriesReader()
@@ -52,14 +52,14 @@ def main():
     parser.add_argument('-folder', help = 'Folder containing bitmap images. If other files are also in the folder, they will be ignored.', \
                         required = True)
     parser.add_argument('-out', help = 'name for output file. It will automatically be stored in the same folder as the bitmaps.', required=True)
-    parser.add_argument('-reference', help = 'path to reference image file')
+    parser.add_argument('-reference', help = 'path to reference image file', default = '')
     parser.add_argument('-origin', help = 'coordinate of the origin. Specify as three numbers with spaces: x y z', nargs = 3, default = None)
     parser.add_argument('-spacing', help = 'voxel dimensions. Specify as three numbers with spaces: dx dy dz', nargs = 3, default = None)
     
     args = parser.parse_args()
     
     if not os.path.isfile(args.reference) and (args.origin is None or args.spacing is None):
-        print('ERROR: you did not specify a valid reference image or a complete set of metadata (origin and spacing)')
+        raise RuntimeError('ERROR: you did not specify a valid reference image or a complete set of metadata (origin and spacing)')
     else:
         if os.path.isfile(args.reference):
             print('Reading in reference image...')

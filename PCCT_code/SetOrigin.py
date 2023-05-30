@@ -13,7 +13,7 @@ import argparse
 def SetOrigin(image, mask, outImage, outMask):
     
     if mask.GetSize() != image.GetSize():
-        print('ERROR: Mask and image are not of equal size!')
+        raise ValueError('ERROR: Mask and image are not of equal size!')
     
     else:
         mask_array = sitk.GetArrayFromImage(mask)
