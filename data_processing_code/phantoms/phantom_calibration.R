@@ -1,0 +1,63 @@
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+data_path <- 'D:/PCCT_data/phantoms/EFP/'
+print('Reading input files EFP1...')
+print('0/4...')
+df50 <- read.table(paste0(data_path, '50mgHA.txt'),col.names='HU')
+print('1/4...')
+df100 <- read.table(paste0(data_path, '100mgHA.txt'),col.names='HU')
+print('2/4...')
+df200 <- read.table(paste0(data_path, '200mgHA.txt'),col.names='HU')
+print('3/4...')
+df800 <- read.table(paste0(data_path, '800mgHA.txt'),col.names='HU')
+print('4/4... Done')
+
+df50$density = 50
+df100$density = 100
+df200$density = 200
+df800$density = 800
+
+data1 <- rbind(df50,df100,df200,df800)
+data1$phantom = 'EFP_SharpKernel'
+
+data_path <- 'D:/PCCT_data/phantoms/EFP2/'
+print('Reading input files EFP2...')
+print('0/4...')
+df50 <- read.table(paste0(data_path, '50mgHA.txt'),col.names='HU')
+print('1/4...')
+df100 <- read.table(paste0(data_path, '100mgHA.txt'),col.names='HU')
+print('2/4...')
+df200 <- read.table(paste0(data_path, '200mgHA.txt'),col.names='HU')
+print('3/4...')
+df800 <- read.table(paste0(data_path, '800mgHA_2.txt'),col.names='HU')
+print('4/4... Done')
+
+df50$density = 50
+df100$density = 100
+df200$density = 200
+df800$density = 800
+
+data2 <- rbind(df50,df100,df200,df800)
+data2$phantom = 'EFP_WideKernel'
+
+data <- rbind(data1, data2)
+
+
+data_summary <- data %>% group_by(density, phantom) %>% summarise(mean_HU = mean(HU), variance = var(HU), SD = sd(HU), N = length(HU)) %>%
+                        mutate(t=qt(0.975, N-1)) %>%
+                        mutate(CImax = mean_HU +t*SD/sqrt(N)) %>%
+                        mutate(CImin = mean_HU -t*SD/sqrt(N))
+
+g_boxplot <- ggplot(data, aes(x = factor(density), y = HU)) +
+  geom_boxplot(aes(fill=phantom)) +
+  labs(x = 'Mineral density [mgHA/cm³]', y = 'Houndsfield Unit')
+
+g_curve <- ggplot(data, aes(x=density, color=phantom)) +
+  geom_smooth(method = 'lm',se=FALSE, formula = y~x, size=1, aes(y=HU)) +
+  geom_point(data = data_summary, aes(y=mean_HU)) 
+  # geom_errorbar(data = data_summary  , aes(ymin =mean_HU -SD, ymax=mean_HU+SD), width=10)
+
+
+

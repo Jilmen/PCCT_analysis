@@ -1,0 +1,14 @@
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+data <- read.table('in_situ_reprod.txt', sep=',', 
+                   col.names = c('mean_diff','sd_diff', 'tmp1','tmp2', 'N', 'identifier')) %>%
+  separate(col='identifier', into=c('schijf','info'), sep=':spec') %>%
+  separate(col='info', into=c('specimen','label','bone'), sep='_') %>%
+  select(mean_diff, sd_diff, N, specimen, bone) %>%
+  mutate(weight_var = (N-1)*sd_diff^2)
+
+nb_rows = nrow(data)
+data_sum <- summarize(data, av_diff=mean(mean_diff), av_sd = sqrt((sum(weight_var))/(sum(N)-nb_rows)))
+  

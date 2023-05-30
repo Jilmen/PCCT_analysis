@@ -1,0 +1,27 @@
+{
+    "id": "C014AC8A",
+    "path": "~/PCCT_analysis/data_processing_code/Least_detectable_remodeling/reprod.R",
+    "project_path": "reprod.R",
+    "type": "r_source",
+    "hash": "1294447751",
+    "contents": "",
+    "dirty": false,
+    "created": 1683758294501.0,
+    "source_on_save": false,
+    "relative_order": 5,
+    "properties": {
+        "tempName": "Untitled1",
+        "source_window_id": "",
+        "Source": "Source",
+        "cursorPosition": "12,46",
+        "scrollLine": "0"
+    },
+    "folds": "",
+    "lastKnownWriteTime": 1683762697,
+    "encoding": "UTF-8",
+    "collab_server": "",
+    "source_window": "",
+    "last_content_update": 1683762697239,
+    "read_only": false,
+    "read_only_alternatives": []
+}
