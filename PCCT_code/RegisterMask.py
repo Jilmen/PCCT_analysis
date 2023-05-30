@@ -72,6 +72,10 @@ def switchEigenpairs(v,w,i,l):
     v[i],v[l] = v[l],v[i]
     w[:,[i,l]] = w[:,[l,i]]
     
+def checkRHS(w):
+    vec3 = np.round(w[:,2],4)
+    cross = np.round(np.cross(w[:,0], w[:,1]), 4)
+    return (vec3 == cross).all()
 
 def MatrixToList(R):
     return [R[i,j] for i in range(0,3) for j in range(0,3)]
@@ -113,38 +117,41 @@ def RegisterMask(fix, mov, outputFolder, DEBUG = False, \
     [v_fix, w_fix] = np.linalg.eig(fix_I)
     
     
-    # eigenvectors and -values are not automatically sorted in increasing order
-    Sorted = False
-    while not Sorted:
-        maxMOV = np.where(v_mov == np.max(v_mov))[0][0]
-        maxFIX = np.where(v_fix == np.max(v_fix))[0][0]
-        minMOV = np.where(v_mov == np.min(v_mov))[0][0]
-        minFIX = np.where(v_fix == np.min(v_fix))[0][0]
-        
-        if maxFIX == maxMOV and minFIX == minMOV:
-            Sorted = True
-        elif maxFIX == maxMOV:
-            l = [0,1,2]
-            l.remove(maxMOV)
-            switchEigenpairs(v_mov, w_mov, l[0], l[1])
-        elif minFIX == minMOV:
-            l = [0,1,2]
-            l.remove(minMOV)
-            switchEigenpairs(v_mov, w_mov, l[0], l[1])
-        else:
-            switchEigenpairs(v_mov, w_mov , maxMOV, maxFIX)
+    # eigenvectors and -values are not automatically sorted in decreasing order
+    i_mov = np.abs(v_mov).argsort()[::-1]
+    v_mov = v_mov[i_mov]
+    w_mov = w_mov[:, i_mov]
+    
+    i_fix = np.abs(v_fix).argsort()[::-1]
+    v_fix = v_fix[i_fix]
+    w_fix = w_fix[:, i_fix]
     
     # eigenvectors can be inverted and corresponding vectors can thus be pointing in opposite direction
-    for nbVector in range(0,2):
+    
+    # Step 1: make sure fixed image has right hand coordinate system with eigenvectors
+    RHS = checkRHS(w_fix)
+    if not RHS:
+        print('fixed image eigenvectors are not right hand system. Inverting third vector')
+        w_fix[:,2] *= -1
+    
+    # Step 2: make sure first and second eigenvector point in same direction:
+    #         project coordinates on vector and look at maximum in both directions
+    for nbVector in range(0,2): #only for first two vectors
         proj_mov = np.matmul(np.transpose(mov_Mask), w_mov[:,nbVector])
         proj_fix = np.matmul(np.transpose(fix_Mask), w_fix[:,nbVector])
-          
-        if len(np.where(proj_mov < 0)[0]) > len(np.where(proj_mov > 0)[0]):
-            w_mov[:,nbVector] *= -1
+        
+        max_mov, min_mov = np.max(proj_mov), np.min(proj_mov)
+        max_fix, min_fix = np.max(proj_fix), np.min(proj_fix)
+        
+        if abs(max_mov - max_fix) > abs(max_mov - min_fix):
             print(f'invert moving image eigenvector {nbVector}')
-        if len(np.where(proj_fix < 0)[0]) > len(np.where(proj_fix > 0)[0]):
-            w_fix[:,nbVector] *= -1  
-            print(f'invert fixed image eigenvector {nbVector}')
+            w_mov[:,nbVector] *= -1
+    
+    # Step 3: make sure moving image has right hand coordinate system with eigenvectors
+    RHS = checkRHS(w_mov)
+    if not RHS:
+        print('moving image eigenvectors are not right hand system. Inverting third vector')
+        w_mov[:,2] *= -1
     
     # create output folder
     if not os.path.exists(outputFolder):
@@ -156,7 +163,11 @@ def RegisterMask(fix, mov, outputFolder, DEBUG = False, \
         # transpose(M) * A = transpose(M')
         
         Rtot = np.matmul(w_mov,np.transpose(w_fix))
-    
+        
+        # translation along principal ax if bone out of FOV
+        maxMOV = np.where(v_mov == np.max(v_mov))[0][0]
+        maxFIX = np.where(v_fix == np.max(v_fix))[0][0]
+        
     if DEBUG:
         print('Debug mode...')
         
@@ -294,7 +305,7 @@ def main():
     args = parser.parse_args()
     
     if not os.path.isfile(args.fix) or not os.path.isfile(args.mov):
-        print('ERROR: you did not specify a valid file for the fixed and/or moving image.')
+        raise RuntimeError('ERROR: you did not specify a valid file for the fixed and/or moving image.')
     
     else:
         print('Reading in images...')
