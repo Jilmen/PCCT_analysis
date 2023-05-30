@@ -5,4 +5,4 @@ PCCT_code/ad_hoc/
 PCCT_code/tmp/
 tasklists/
 ORMIR_XCT
-*/.RDataTmp
+*.RDataTmp
