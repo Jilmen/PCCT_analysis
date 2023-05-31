@@ -10,24 +10,37 @@ import numpy as np
 import os
 import argparse
 
+def CalculateCOG(mask):
+    """ 
+    Calculates the centre of geometry based on a full mask.
+    
+    Inputs:
+        - mask: SimpleITK image with black/white values. 0 is taken as background.
+        
+    Outputs:
+        - array of coordinates (x,y,z) expressed in world coordinate system
+    """
+    
+    mask_array = sitk.GetArrayFromImage(mask)
+    
+    print('Locating weights...')
+    (depths, rows, cols) = np.where(mask_array != 0)
+    
+    x = np.sum(cols) / len(cols)
+    y = np.sum(rows) / len(rows)
+    z = np.sum(depths)/len(depths)
+    cog = (x,y,z)
+    print(f'Centre of geometry calculated: {cog} [index]')
+    
+    physical_cog = np.asarray(mask.TransformContinuousIndexToPhysicalPoint(cog))
+    return physical_cog
+
 def SetOrigin(image, mask, outImage, outMask):
     
     if mask.GetSize() != image.GetSize():
         raise ValueError('ERROR: Mask and image are not of equal size!')
-    
     else:
-        mask_array = sitk.GetArrayFromImage(mask)
-        
-        print('Locating weights...')
-        (depths, rows, cols) = np.where(mask_array != 0)
-        
-        x = np.sum(cols) / len(cols)
-        y = np.sum(rows) / len(rows)
-        z = np.sum(depths)/len(depths)
-        cog = (x,y,z)
-        print(f'Centre of geometry calculated: {cog} [index]')
-        
-        physical_cog = np.asarray(image.TransformContinuousIndexToPhysicalPoint(cog))
+        physical_cog = CalculateCOG(mask)
         origin = np.asarray(image.GetOrigin())
         physical_cog_local = physical_cog - origin
         new_origin = [-i for i in physical_cog_local]
@@ -36,10 +49,7 @@ def SetOrigin(image, mask, outImage, outMask):
         image.SetOrigin(new_origin)
         mask.SetOrigin(new_origin)
         
-        print('Writing images...')
-        sitk.WriteImage(image, outImage)
-        sitk.WriteImage(mask, outMask)
-        print('Done!')
+        return image, mask
 
 
 def main():
@@ -68,7 +78,10 @@ def main():
         msk = sitk.ReadImage(args.mask)
         print('Done reading input')
         
-        SetOrigin(img, msk, outImg, outMsk)
+        out_img, out_mask = SetOrigin(img, msk, outImg, outMsk)
+        print('Writing images...')
+        sitk.WriteImage(out_img, outImg)
+        sitk.WriteImage(out_mask, outMsk)
 
 if __name__ == '__main__':
     main()

@@ -9,13 +9,23 @@ import numpy as np
 import SimpleITK as sitk
 import os
 import argparse
+from SetOrigin import CalculateCOG
 
-def CalculateInertiaTensor(sitkImage):
+def CalculateInertiaTensor(sitkImage, cog):
     
     """
-    Returns a numpy Tensor array with the moments of inertia according to image coordinate system.
-    The image should have its center of geometry placed in the world coordinate system's origin.
+    Calculate a numpy Tensor array with the moments of inertia according to image coordinate system.
+    
+    Inputs:
+        - sitkImage: mask SimpleITK image. Background is taken as 0
+        - cog: iterable with coordinates of centre of geometry (x,y,z) expressed in world coordinate system
+        
+    Outputs:
+        - numpy array with moments of inertia
+        - numpy matrix 3xN with the coordinates of all the mask voxels
     """
+    
+    (cog_x, cog_y, cog_z) = cog
     
     array = sitk.GetArrayFromImage(sitkImage)
     
@@ -43,6 +53,10 @@ def CalculateInertiaTensor(sitkImage):
     x = np.array([x_dict[i] for i in cols])
     y = np.array([y_dict[i] for i in rows])
     z = np.array([z_dict[i] for i in depths])
+    
+    x -= cog_x
+    y -= cog_y
+    z -= cog_z
             
     xx = x*x
     yy = y*y
@@ -92,26 +106,40 @@ def RegisterMask(fix, mov, outputFolder, DEBUG = False, \
                  FlipMatrixMoving = np.array([[1.,0.,0.],[0.,1.,0.],[0.,0.,1.]]), \
                  FlipMatrixFixed = np.array([[1.,0.,0.],[0.,1.,0.],[0.,0.,1.]])):
     
+    MIRROR_ORIENT = True
+    
     size_fix = fix.GetNumberOfPixels() * fix.GetNumberOfComponentsPerPixel() * fix.GetSizeOfPixelComponent()
     size_mov = mov.GetNumberOfPixels() * mov.GetNumberOfComponentsPerPixel() * mov.GetSizeOfPixelComponent()
     
+    # make sure moving image lies in the array extent of fixed image, and keep track of original origin
+    original_origin = mov.GetOrigin()
+    mov.SetOrigin(fix.GetOrigin())
+    
     # Calculation of inertia tensor can be computationally heavy, so it gets done in the smallest domain size
     if size_mov >= size_fix:
+        mov.SetOrigin(fix.GetOrigin())
         filtI = sitk.ResampleImageFilter()
         filtI.SetInterpolator(sitk.sitkNearestNeighbor)
         filtI.SetReferenceImage(fix)
         mov_f = filtI.Execute(mov)
-
-        mov_I, mov_Mask = CalculateInertiaTensor(mov_f)
-        fix_I, fix_Mask = CalculateInertiaTensor(fix)
+                
+        cog_mov = CalculateCOG(mov_f)
+        cog_fix = CalculateCOG(fix)
+        
+        mov_I, mov_Mask = CalculateInertiaTensor(mov_f, cog_mov)
+        fix_I, fix_Mask = CalculateInertiaTensor(fix, cog_fix)
+    
     else:
         filtI = sitk.ResampleImageFilter()
         filtI.SetInterpolator(sitk.sitkNearestNeighbor)
         filtI.SetReferenceImage(mov)
         fix_f = filtI.Execute(fix)
+        
+        cog_mov = CalculateCOG(mov)
+        cog_fix = CalculateCOG(fix_f)
 
-        mov_I, mov_Mask = CalculateInertiaTensor(mov)
-        fix_I, fix_Mask = CalculateInertiaTensor(fix_f)
+        mov_I, mov_Mask = CalculateInertiaTensor(mov, cog_mov)
+        fix_I, fix_Mask = CalculateInertiaTensor(fix_f, cog_fix)
     
     [v_mov, w_mov] = np.linalg.eig(mov_I)
     [v_fix, w_fix] = np.linalg.eig(fix_I)
@@ -128,7 +156,7 @@ def RegisterMask(fix, mov, outputFolder, DEBUG = False, \
     
     # eigenvectors can be inverted and corresponding vectors can thus be pointing in opposite direction
     
-    # Step 1: make sure fixed image has right hand coordinate system with eigenvectors
+    #Step 1: make sure fixed image has right hand coordinate system with eigenvectors
     RHS = checkRHS(w_fix)
     if not RHS:
         print('fixed image eigenvectors are not right hand system. Inverting third vector')
@@ -136,22 +164,41 @@ def RegisterMask(fix, mov, outputFolder, DEBUG = False, \
     
     # Step 2: make sure first and second eigenvector point in same direction:
     #         project coordinates on vector and look at maximum in both directions
-    for nbVector in range(0,2): #only for first two vectors
+    edge_projections_mov = np.zeros((3,2))
+    edge_projections_fix = np.zeros((3,2))
+    for nbVector in range(0,3): #only for first two vectors
         proj_mov = np.matmul(np.transpose(mov_Mask), w_mov[:,nbVector])
         proj_fix = np.matmul(np.transpose(fix_Mask), w_fix[:,nbVector])
         
         max_mov, min_mov = np.max(proj_mov), np.min(proj_mov)
         max_fix, min_fix = np.max(proj_fix), np.min(proj_fix)
         
-        if abs(max_mov - max_fix) > abs(max_mov - min_fix):
-            print(f'invert moving image eigenvector {nbVector}')
+        max_edge_mov = len(np.where(proj_mov > 0.75 * max_mov)[0])
+        min_edge_mov = len(np.where(proj_mov < 0.75 * min_mov)[0])
+        max_edge_fix = len(np.where(proj_fix > 0.75 * max_fix)[0])
+        min_edge_fix = len(np.where(proj_fix < 0.75 * min_fix)[0])
+        
+        edge_projections_mov[nbVector,:] = max_edge_mov, min_edge_mov
+        edge_projections_fix[nbVector,:] = max_edge_fix, min_edge_fix
+    
+    sorted_size_differences = np.abs(edge_projections_fix[:,0] - edge_projections_fix[:,1]).argsort()[::-1]
+    
+    for i in range(2):
+        nbVector = sorted_size_differences[i]
+        if edge_projections_fix[nbVector,:].argmax() != edge_projections_mov[nbVector,:].argmax():
+            print(f'Inverting eigenvector {nbVector} in moving image')
             w_mov[:,nbVector] *= -1
     
-    # Step 3: make sure moving image has right hand coordinate system with eigenvectors
+    # Step 3: make sure moving image correctly oriented coordinate system with eigenvectors
+    # !! images can be flipped in orientation, then RHS matches LHS
     RHS = checkRHS(w_mov)
-    if not RHS:
-        print('moving image eigenvectors are not right hand system. Inverting third vector')
-        w_mov[:,2] *= -1
+    if RHS == MIRROR_ORIENT: # if mirrored, moving must be LHS, if not mirrored moving must be RHS
+        nbVector = sorted_size_differences[2]
+        print(f'moving image eigenvectors are not right hand system. Inverting eigenvector {nbVector}')
+        w_mov[:,nbVector] *= -1
+    
+    print(f'moving image RHS: {checkRHS(w_mov)}')
+    print(f'fixed image RHS: {checkRHS(w_fix)}')
     
     # create output folder
     if not os.path.exists(outputFolder):
@@ -251,7 +298,14 @@ def RegisterMask(fix, mov, outputFolder, DEBUG = False, \
     
     print('Writing transformation parameter file.')
     # writing parameter file for transformation
-    s = MatrixToString(Rtot)
+    Rot_string = MatrixToString(Rtot)
+    translation1 = -(np.asarray(fix.GetOrigin()) - np.asarray(original_origin))
+    translation2 = -(cog_fix - cog_mov) # I find these negative signs counterintuitive, but that's apparatnly how it works...
+    translation = translation1 + translation2
+    
+    Trans_string = f'{translation[0]} {translation[1]} {translation[2]}'
+    
+    
     
     if not os.path.exists(outputFolder):
         os.mkdir(outputFolder)
@@ -259,7 +313,7 @@ def RegisterMask(fix, mov, outputFolder, DEBUG = False, \
     f = open(outputFolder + '/MaskRegistrationParam.txt','w')
     f.write('(Transform "AffineTransform")\n')
     f.write('(NumberOfParameters 12)\n')
-    f.write(f'(TransformParameters {s} 0 0 0)\n')
+    f.write(f'(TransformParameters {Rot_string} {Trans_string})\n')
     f.write('(InitialTransformParametersFileName "NoInitialTransform")\n')
     f.write('(HowToCombineTransforms "Compose")\n')
     f.write('(FixedImageDimension 3)\n')
@@ -281,7 +335,7 @@ def RegisterMask(fix, mov, outputFolder, DEBUG = False, \
     f.write(f'(Direction {d1} {d2} {d3} {d4} {d5} {d6} {d7} {d8} {d9})\n')
     
     f.write('(UseDirectionCosines "true")\n')
-    f.write('(CenterOfRotationPoint 0.0000000000 0.0000000000 0.0000000000)\n')
+    f.write(f'(CenterOfRotationPoint {cog_fix[0]} {cog_fix[1]} {cog_fix[2]})\n')
     f.write('(ResampleInterpolator "FinalNearestNeighborInterpolator")\n')
     f.write('(Resampler "DefaultResampler")\n')
     f.write('(DefaultPixelValue 0.000000)\n')
@@ -316,3 +370,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
