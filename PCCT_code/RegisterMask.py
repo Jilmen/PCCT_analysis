@@ -300,7 +300,7 @@ def main():
     parser.add_argument('-mov', help='Moving image', required=True)
     parser.add_argument('-out', help='Output folder to store parameter files and any intermediate results', required=True)
     parser.add_argument('-debug', help='Execute script in debug mode. Intermediate image results will be written. Using the API two matrices can be given as input to perform intermediate flippings, but this is not possible via the command line!', action='store_true', default=False)
-
+    parser.add_argument('-mirrored', help='If one image modality is mirrored wrt the other. Default is True. Enter with 1 / 0', default='1')
     args = parser.parse_args()
     
     if not os.path.isfile(args.fix) or not os.path.isfile(args.mov):
@@ -310,8 +310,9 @@ def main():
         print('Reading in images...')
         fixedIm = sitk.ReadImage(args.fix)
         movingIm = sitk.ReadImage(args.mov)
+        mirror = int(args.mirrored)
         
-        RegisterMask(fixedIm, movingIm , args.out, DEBUG = args.debug)
+        RegisterMask(fixedIm, movingIm , args.out, DEBUG = args.debug, MIRROR_ORIENT=mirror)
 
 if __name__ == '__main__':
     main()
