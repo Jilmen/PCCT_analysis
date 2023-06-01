@@ -102,30 +102,48 @@ def MatrixToString(R):
     return s
 
 
-def RegisterMask(fix, mov, outputFolder, DEBUG = False, \
-                 FlipMatrixMoving = np.array([[1.,0.,0.],[0.,1.,0.],[0.,0.,1.]]), \
-                 FlipMatrixFixed = np.array([[1.,0.,0.],[0.,1.,0.],[0.,0.,1.]])):
+def RegisterMask(fix, mov, outputFolder, DEBUG = False, MIRROR_ORIENT = True):
     
-    MIRROR_ORIENT = True
+    """
+    This function calculates a rigid registration to transform the moving image onto the fixed image.
+    It is implemented for mask images, and serves as a preprocessing step in a full registration workflow.
+    Alignment is done by calculating and matching the principal axis of inertia.
+    Measures are implemented such that the correct axes match in both image domain, and that the vectors point in the same direction.
+    This is done by looking at the projections of the masks on the inertia axes and by exploiting the right hand coordinate system definition.
     
-    size_fix = fix.GetNumberOfPixels() * fix.GetNumberOfComponentsPerPixel() * fix.GetSizeOfPixelComponent()
-    size_mov = mov.GetNumberOfPixels() * mov.GetNumberOfComponentsPerPixel() * mov.GetSizeOfPixelComponent()
+    Inputs:
+        - fix: SimpleITK image. Image voxels are white (255) and background voxels black (0). Image that is not transformed
+        - mov: SimpleITK image. Idem as fix. Image that is to be transformed onto fixed image.
+        - outputFolder: string with path to folder to store output. 
+        - DEBUG: boolean value. If initial results are not correct, try running again with DEBUG=True .
+        - MIRROR_ORIENT: boolean value. If the two images domain have flipped the image with respect to another, set True. (This is the case for Bruker microCT - clinical CT)
+    
+    Output:
+        - a parameter text file namd <MaskRegistrationParam.txt> is written in the outputFolder to execute the transformation with transformix. To execute the transformation, run from command line:
+            >> transformix -in <path_to_moving_image> -out <outputFolder> -tp <outputFolder>/MaskRegistrationParam.txt
+    """
+        
+    arr_fix = sitk.GetArrayViewFromImage(fix)
+    arr_mov = sitk.GetArrayViewFromImage(mov)
+    size_fix = len(np.where(arr_fix != 0)[0]) * fix.GetNumberOfComponentsPerPixel() * fix.GetSizeOfPixelComponent()
+    size_mov = len(np.where(arr_mov != 0)[0]) * mov.GetNumberOfComponentsPerPixel() * mov.GetSizeOfPixelComponent()
     
     # make sure moving image lies in the array extent of fixed image, and keep track of original origin
     original_origin = mov.GetOrigin()
-    mov.SetOrigin(fix.GetOrigin())
+    new_origin = fix.GetOrigin()
+    mov.SetOrigin(new_origin)
     
     # Calculation of inertia tensor can be computationally heavy, so it gets done in the smallest domain size
     if size_mov >= size_fix:
-        mov.SetOrigin(fix.GetOrigin())
         filtI = sitk.ResampleImageFilter()
         filtI.SetInterpolator(sitk.sitkNearestNeighbor)
         filtI.SetReferenceImage(fix)
+        filtI.SetOutputOrigin(mov.GetOrigin()) # avoid unwanted translations
         mov_f = filtI.Execute(mov)
-                
+                        
         cog_mov = CalculateCOG(mov_f)
         cog_fix = CalculateCOG(fix)
-        
+
         mov_I, mov_Mask = CalculateInertiaTensor(mov_f, cog_mov)
         fix_I, fix_Mask = CalculateInertiaTensor(fix, cog_fix)
     
@@ -133,6 +151,7 @@ def RegisterMask(fix, mov, outputFolder, DEBUG = False, \
         filtI = sitk.ResampleImageFilter()
         filtI.SetInterpolator(sitk.sitkNearestNeighbor)
         filtI.SetReferenceImage(mov)
+        filtI.SetOutputOrigin(fix.GetOrigin()) # avoid unwanted translations
         fix_f = filtI.Execute(fix)
         
         cog_mov = CalculateCOG(mov)
@@ -181,8 +200,23 @@ def RegisterMask(fix, mov, outputFolder, DEBUG = False, \
         edge_projections_mov[nbVector,:] = max_edge_mov, min_edge_mov
         edge_projections_fix[nbVector,:] = max_edge_fix, min_edge_fix
     
-    sorted_size_differences = np.abs(edge_projections_fix[:,0] - edge_projections_fix[:,1]).argsort()[::-1]
+    sorted_size_differences = np.abs(edge_projections_mov[:,0] - edge_projections_mov[:,1]).argsort()[::-1]
     
+    if DEBUG:
+        print('Debugging mode...')
+        print('These are the current number of voxels on the 25% edge regions of projections onto eigenvectors: (rows=vector, cols=(max min)')
+        print('MOVING IMAGE')
+        print(edge_projections_mov)
+        print()
+        print('FIXED IMAGE')
+        print(edge_projections_fix)
+        print()
+        print(f'Vector orientation was based on eigenvectors {sorted_size_differences[0]} and {sorted_size_differences[1]}')
+        print(f'Changing to eigenvectors {sorted_size_differences[0]} and {sorted_size_differences[2]}')
+        print('\nPlease run transformix with new parameters. If results are still incorrect, it is advised to manually check if your mask is well defined for the bone geometry')
+        
+        sorted_size_differences[1], sorted_size_differences[2] = sorted_size_differences[2], sorted_size_differences[1]
+        
     for i in range(2):
         nbVector = sorted_size_differences[i]
         if edge_projections_fix[nbVector,:].argmax() != edge_projections_mov[nbVector,:].argmax():
@@ -192,13 +226,12 @@ def RegisterMask(fix, mov, outputFolder, DEBUG = False, \
     # Step 3: make sure moving image correctly oriented coordinate system with eigenvectors
     # !! images can be flipped in orientation, then RHS matches LHS
     RHS = checkRHS(w_mov)
+    system = 'left hand system' if MIRROR_ORIENT else 'right hand system'
     if RHS == MIRROR_ORIENT: # if mirrored, moving must be LHS, if not mirrored moving must be RHS
         nbVector = sorted_size_differences[2]
-        print(f'moving image eigenvectors are not right hand system. Inverting eigenvector {nbVector}')
+        print(f'moving image eigenvectors are not {system}. Inverting eigenvector {nbVector}')
         w_mov[:,nbVector] *= -1
-    
-    print(f'moving image RHS: {checkRHS(w_mov)}')
-    print(f'fixed image RHS: {checkRHS(w_fix)}')
+ 
     
     # create output folder
     if not os.path.exists(outputFolder):
@@ -210,10 +243,7 @@ def RegisterMask(fix, mov, outputFolder, DEBUG = False, \
         # transpose(M) * A = transpose(M')
         
         Rtot = np.matmul(w_mov,np.transpose(w_fix))
-        
-        # translation along principal ax if bone out of FOV
-        maxMOV = np.where(v_mov == np.max(v_mov))[0][0]
-        maxFIX = np.where(v_fix == np.max(v_fix))[0][0]
+
         
     if DEBUG:
         print('Debug mode...')
@@ -299,7 +329,7 @@ def RegisterMask(fix, mov, outputFolder, DEBUG = False, \
     print('Writing transformation parameter file.')
     # writing parameter file for transformation
     Rot_string = MatrixToString(Rtot)
-    translation1 = -(np.asarray(fix.GetOrigin()) - np.asarray(original_origin))
+    translation1 = -(np.asarray(new_origin) - np.asarray(original_origin))
     translation2 = -(cog_fix - cog_mov) # I find these negative signs counterintuitive, but that's apparatnly how it works...
     translation = translation1 + translation2
     
