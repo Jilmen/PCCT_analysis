@@ -237,94 +237,14 @@ def RegisterMask(fix, mov, outputFolder, DEBUG = False, MIRROR_ORIENT = True):
     if not os.path.exists(outputFolder):
         os.mkdir(outputFolder)
     
-    if not DEBUG:
-        # SimpleITK convention:
-        # for coordinate matrix M = [c1 c2 ... cn]
-        # transpose(M) * A = transpose(M')
-        
-        Rtot = np.matmul(w_mov,np.transpose(w_fix))
+    
+    # SimpleITK convention:
+    # for coordinate matrix M = [c1 c2 ... cn]
+    # transpose(M) * A = transpose(M')
+    
+    Rtot = np.matmul(w_mov,np.transpose(w_fix))
 
         
-    if DEBUG:
-        print('Debug mode...')
-        
-        # finding the main direction of each eigenvector
-        unitmov = np.zeros((3,3))
-        unitfix = np.zeros((3,3))
-        for k in range(0,3):
-            maxMOV = np.where(abs(w_mov[:,k]) == np.max(abs(w_mov[:,k])))[0][0]
-            maxFIX = np.where(abs(w_fix[:,k]) == np.max(abs(w_fix[:,k])))[0][0]
-            unitmov[maxMOV,k] = np.sign(w_mov[maxMOV,k])
-            unitfix[maxFIX,k] = np.sign(w_fix[maxFIX,k])
-            
-        
-        # --- Series of operation ---
-        # 1) First rotation: principle axes moving image to main axes
-        Rmov2x = np.matmul(w_mov,np.transpose(unitmov))
-
-        # 2) Intermediate flip defined with input argument
-
-        # 3) Aligning corresponding principal axes (can be flip based)
-        Rx2x = np.matmul(unitmov, np.transpose(unitfix))
-        
-        # 4) Intermediate flip defined with input argument
-        
-        # 5) Second rotation: main axes to principle axes fixed image
-        Rx2fix = np.matmul(unitfix, np.transpose(w_fix))
-        
-        # -- Resample filter
-        filt = sitk.ResampleImageFilter()
-        filt.SetInterpolator(sitk.sitkNearestNeighbor)
-        filt.SetReferenceImage(fix)
-        
-        # -- Transformation setup
-        MOV2X = sitk.AffineTransform(3)
-        MOV2X.SetMatrix(MatrixToList(Rmov2x))
-        
-        FLIP1 = sitk.AffineTransform(3)
-        FLIP1.SetMatrix(MatrixToList(FlipMatrixMoving))
-        
-        X2X = sitk.AffineTransform(3)
-        X2X.SetMatrix(MatrixToList(Rx2x))
-        
-        FLIP2 = sitk.AffineTransform(3)
-        FLIP2.SetMatrix(MatrixToList(FlipMatrixFixed))
-        
-        X2FIX = sitk.AffineTransform(3)
-        X2FIX.SetMatrix(MatrixToList(Rx2fix))
-        
-        # -- Intermediate results
-        print('Writing intermediate results...')
-        # 1) First rotation
-        filt.SetTransform(MOV2X)
-        step_mov2x = filt.Execute(mov)
-        sitk.WriteImage(step_mov2x, os.path.join(outputFolder, 'step1_mov2x.mha'))
-        
-        # 2) input flip
-        filt.SetTransform(FLIP1)
-        step_flip1 = filt.Execute(step_mov2x)
-        sitk.WriteImage(step_flip1, os.path.join(outputFolder, 'step2_flip1.mha'))
-        
-        # 3) Unit axes alignment
-        filt.SetTransform(X2X)
-        step_x2x = filt.Execute(step_flip1)
-        sitk.WriteImage(step_x2x, os.path.join(outputFolder, 'step3_x2x.mha'))
-        
-        # 4) input flip 2
-        filt.SetTransform(FLIP2)
-        step_flip2 = filt.Execute(step_x2x)
-        sitk.WriteImage(step_flip2, os.path.join(outputFolder, 'step4_flip2.mha'))
-        
-        # 5) Second rotation
-        filt.SetTransform(X2FIX)
-        step_x2fix = filt.Execute(step_flip2)
-        sitk.WriteImage(step_x2fix, os.path.join(outputFolder, 'step5_x2fix.mha'))
-        
-        
-        # -- Total matrix
-        Rtot = np.matmul(Rmov2x, np.matmul(FlipMatrixMoving, np.matmul(Rx2x, np.matmul(FlipMatrixFixed, Rx2fix))))
-        
-    # end debug
     
     print('Writing transformation parameter file.')
     # writing parameter file for transformation
@@ -334,11 +254,6 @@ def RegisterMask(fix, mov, outputFolder, DEBUG = False, MIRROR_ORIENT = True):
     translation = translation1 + translation2
     
     Trans_string = f'{translation[0]} {translation[1]} {translation[2]}'
-    
-    
-    
-    if not os.path.exists(outputFolder):
-        os.mkdir(outputFolder)
     
     f = open(outputFolder + '/MaskRegistrationParam.txt','w')
     f.write('(Transform "AffineTransform")\n')
