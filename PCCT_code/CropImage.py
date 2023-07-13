@@ -120,7 +120,7 @@ def getCoordinates():
      
     
 
-def CropImageManually(image, WRITE_IMAGE = False, outIm = ''):
+def CropImageManually(image, WRITE_IMAGE = False, PRESERVE_DIMENSIONS = False, outIm = ''):
     global arr
    
     arr = sitk.GetArrayViewFromImage(image)
@@ -132,15 +132,21 @@ def CropImageManually(image, WRITE_IMAGE = False, outIm = ''):
     cols = [int(i[0]) for i in coords_axial]
     depths = [int(i) for i in coords_sagital]
     
-    min_r, max_r = min(rows), max(rows)
-    min_c, max_c = min(cols), max(cols)
-    min_d, max_d = min(depths), max(depths)
-    
-    out_arr = arr[min_d:max_d , min_r:max_r , min_c:max_c]
-    out_im = sitk.GetImageFromArray(out_arr)
-    
-    out_im.SetOrigin(image.GetOrigin())
-    out_im.SetSpacing(image.GetSpacing())
+    min_x, max_x = np.min(cols), np.max(cols)
+    min_y, max_y = np.min(rows), np.max(rows)
+    min_z, max_z = np.min(depths), np.max(depths)
+
+    if PRESERVE_DIMENSIONS:
+        out_im = image
+        out_im[:min_x, :, :] = 0
+        out_im[max_x:, :, :] = 0
+        out_im[:, :min_y, :] = 0
+        out_im[:, max_y:, :] = 0
+        out_im[:, :, :min_z] = 0
+        out_im[:, :, max_z:] = 0
+        
+    else:
+        out_im = image[min_x:max_x, min_y:max_y, min_z:max_z]
 
     if WRITE_IMAGE:
         print(f'Writing image to {outIm}...')
@@ -150,7 +156,7 @@ def CropImageManually(image, WRITE_IMAGE = False, outIm = ''):
     return out_im
 
 
-def CropImage(image, roi, margin, WRITE_IMAGE = False, outIm = '', outROI = ''):
+def CropImage(image, roi, margin):
     """
     Crop a large image such that only the region of interest and a predefined margin remain.
     Image and ROI should be SimpleITK images.
@@ -183,13 +189,7 @@ def CropImage(image, roi, margin, WRITE_IMAGE = False, outIm = '', outROI = ''):
     
     image_crop = image[min_x:max_x, min_y:max_y, min_z:max_z]
     roi_crop = roi[min_x:max_x, min_y:max_y, min_z:max_z]
-    
-    if WRITE_IMAGE:
-        print(f'Writing cropped image to {outIm}')
-        sitk.WriteImage(image_crop, outIm)
-        print(f'Writing cropped mask to {outROI}')
-        sitk.WriteImage(roi_crop, outROI)
-        print('Done')
+
     return image_crop, roi_crop
     
 
@@ -199,6 +199,7 @@ def main():
                                      formatter_class=argparse.RawTextHelpFormatter)
     parser.add_argument('-image', help='input image to be cropped', required = True)
     parser.add_argument('-manual', help='manually select a boundary box in the image. You only have to provide the input image and output image name', action='store_true', default=False)
+    parser.add_argument('-manual_oversized', help='same as manual mode, but original image dimensions are preserved and padded with zeros', action='store_true', default=False)
     parser.add_argument('-mask', help='region of interest. Dimensions should match the image. You can enter multiple ROIs, but give the same amount of output names', nargs='+')
     parser.add_argument('-margin', help='Margin beyond the extrema of the region of interest to crop. Should be specified in milimeters.', default=10)
     parser.add_argument('-outImg', help='Name of output image. You can choose to specify a full path or just a filename.'\
@@ -227,9 +228,21 @@ def main():
         if outImg.find('.') == -1:
             outImg += '.mha'
         
-        CropImageManually(im, WRITE_IMAGE = True, outIm = outImg)
-        
+        CropImageManually(im, WRITE_IMAGE = True, PRESERVE_DIMENSIONS = False, outIm = outImg)
     
+    elif args.manual_oversized:
+        print('Manually cropping image')
+        print('Reading image...')
+        im = sitk.ReadImage(args.image)
+        outImg = args.outImg[0]
+        if outImg.find('/') == -1:
+            # image output has to be stored in same folder as input image
+            outImg = base_im + outImg
+        if outImg.find('.') == -1:
+            outImg += '.mha'
+        
+        CropImageManually(im, WRITE_IMAGE = True, PRESERVE_DIMENSIONS= True, outIm = outImg)
+
     else:
 
         if len(args.mask) != len(args.outMask) or len(args.mask) != len(args.outImg):
@@ -272,8 +285,13 @@ def main():
                 print('Reading mask...')
                 mask = sitk.ReadImage(mask)
                 
-                CropImage(img, mask, float(args.margin), WRITE_IMAGE = True, outIm = outImg, outROI = outMask)
-
+                img_crop, roi_crop = CropImage(img, mask, float(args.margin))
+                print(f'Writing cropped image to {outImg}')
+                sitk.WriteImage(img_crop, outImg)
+                print(f'Writing cropped mask to {outMask}')
+                sitk.WriteImage(roi_crop, outMask)
+                print('Done')
+                
 if __name__ == '__main__':
     main()
         

@@ -7,3 +7,4 @@ tasklists/
 ORMIR_XCT
 *.RDataTmp
 data_processing_code/
+.Rproj.user

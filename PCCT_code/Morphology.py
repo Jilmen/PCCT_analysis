@@ -137,6 +137,28 @@ def FullBoneMask(image_arr, closing_vox):
     
     return mask_arr
 
+def TrabecularMask(image_arr, mask_arr):
+    dtype = mask_arr.dtype
+    struct = ndimage.generate_binary_structure(3,1).astype(dtype)
+    
+    image_arr *= (mask_arr != 0)
+
+    print('Calculating VOI...')
+    im_dilate = ndimage.binary_dilation(image_arr, struct, 3)
+    mask_erode = ndimage.binary_erosion(mask_arr, struct, 10)
+    
+    term1 = np.bitwise_xor(mask_arr, im_dilate)
+    term2 = np.bitwise_xor(mask_arr, mask_erode)
+    voi_open = np.bitwise_and(term1, np.bitwise_not(term2))
+    voi_open = np.bitwise_and(voi_open, mask_arr)
+    
+    print('Closing VOI...')
+    voi = ndimage.binary_dilation(voi_open, struct, 15).astype(dtype)
+    voi = ndimage.binary_fill_holes(voi).astype(dtype)
+    voi = ndimage.binary_erosion(voi, struct, 15).astype(dtype)
+    return voi
+    
+
 
 def main():
     parser = argparse.ArgumentParser(description='implementation of multiple morphology based binary operations, implemented in numpy and scipy.ndimage')
@@ -145,6 +167,7 @@ def main():
     parser.add_argument('-operation', help='which morphology algorithm to perform', default='')
     parser.add_argument('-closing_vox', help='number of voxels for the closing operation in the binary mask algorithm', default=None)
     parser.add_argument('-despeckle_vox', help='maximum voxel size for despeckle operation', default=None)
+    parser.add_argument('-bone_mask', help='Full bone mask as input for the trabeculmar voi algorithm. If not passed along, you should specify the closing voxels', default=None)
     parser.add_argument('-out', help = 'output file name', default='C:/workdir/morphology.mha')
     parser.add_argument('-list', help='list all implemented operations', action='store_true')
     
@@ -157,7 +180,8 @@ def main():
         print("{:<25} | {d}".format("mask",d="Full bone mask with closing and filling"))
         print("{:<25} | {d}".format("despeckle",d="Remove white speckles with maximum size"))
         print("{:<25} | {d}".format("despeckle_mask",d="Consecutively perform despeckling and full bone masking"))
-        
+        print("{:<25} | {d}".format("trab_voi",d="Trabecular VOI. You can give a full bone mask, or the parameters for the `despeckle_mask`procedure"))
+
         sys.exit(0)
         
         
@@ -241,6 +265,41 @@ def main():
         print('Writing image...')
         sitk.WriteImage(mask, args.out)
         
+    elif args.operation == 'trab_voi':
+        thresh = np.uint8(args.init_thresh)
+        if thresh == 0:
+            print('WARNING: no threshold given as input. Using default 100')
+            thresh = 100
+            
+        print('thresholding...')
+        image_arr = sitk.GetArrayFromImage(im)
+        image_arr = SingleThreshold(image_arr, thresh)
+            
+        if args.bone_mask == None:
+            if args.closing_vox == None:
+                raise RuntimeError('Trabecular volume of interest cannot be calculated if no mask or no closing voxels is passed')
+            vox = np.uint8(args.closing_vox)
+            mask_arr = FullBoneMask(image_arr, vox)
+        else:
+            print('Reading full bone mask...')
+            mask = sitk.ReadImage(args.bone_mask)
+            mask_arr = sitk.GetArrayViewFromImage(mask)
+            mask_arr = mask_arr != 0
+        
+        voi_arr = TrabecularMask(image_arr, mask_arr)
+        voi_arr = 255*voi_arr.astype(np.uint8)
+        voi = sitk.GetImageFromArray(voi_arr)
+        voi.SetSpacing(im.GetSpacing())
+        voi.SetOrigin(im.GetOrigin())
+        
+        print('Writing image...')
+        sitk.WriteImage(voi, args.out)
+        
+        
+        
+        
+            
+            
     else:
         print(f'WARNING: {args.operation} is not a valid operation. Exitting script without further operations...')
     

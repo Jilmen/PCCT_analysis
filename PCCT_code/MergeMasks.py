@@ -29,7 +29,7 @@ def MergeMasks(mask_list, reference_image):
     merged_array = np.zeros((depths,rows,cols), dtype=bool)
 
     for mask in mask_list:
-        if mask.GetSpacing() != spacing:
+        if not np.all(np.round(mask.GetSpacing(),5) == np.round(spacing,5)):
             raise ValueError('ERROR: not all masks have the same spacing!')
         
         local_origin = mask.GetOrigin()
@@ -42,7 +42,7 @@ def MergeMasks(mask_list, reference_image):
         
         merged_array[oz:oz+sz , oy:oy+sy , ox:ox+sx] += mask_array
         
-    merged_image = sitk.GetImageFromArray(255*merged_array.astype(np.uint8))
+    merged_image = sitk.GetImageFromArray(merged_array.astype(np.uint8))
     merged_image.SetSpacing(spacing)
     merged_image.SetOrigin(origin)
     return merged_image
