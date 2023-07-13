@@ -18,13 +18,11 @@ import matplotlib.pyplot as plt
 import matplotlib
 from matplotlib.widgets import Slider, Button
 
-def WriteSegmentation(segm, bone_file, method_string):
-    
-    if bone_file == '':
-        print('ERROR: you want to save the segmented image, but did not specify a bone_file path. Hence, I do not know where the data should be stored!')
+def WriteSegmentation(segm, output):
+    output_folder = os.path.dirname(output)
+    if output_folder == '':
+        raise Warning('ERROR: you want to save the segmented image, but did not specify a specific directory. Hence, I do not know where the data should be stored!')
     else:
-        output = bone_file[:-4] + '_segm' + method_string +'.mha'
-        print(f'Writing segmentation to {output}...')
         sitk.WriteImage(segm, output)
 
 def update(val):
@@ -105,6 +103,29 @@ def CreateSphere(dx, dy, dz, radius):
                     sphere[depth, row, col] = 1
     return sphere
 
+def CreateGaussianKernel(sphere):
+    sd, sr, sc = np.shape(sphere)
+    kernel_size = max(sd, sr, sc)
+    sigma = 0.3 * ((kernel_size - 1)*0.5 - 1) + 0.8
+    [d,r,c] = np.where(sphere == True)
+    offd, offr, offc = np.floor(sd/2), np.floor(sr/2), np.floor(sc/2)
+    dd = d-offd
+    dr = r-offr
+    dc = c-offc
+    unscaled_kernel = np.zeros(np.shape(sphere))
+    for vox in range(len(d)):
+        di, ri, ci = dd[vox], dr[vox], dc[vox]
+        x_vec = di**2 + ri**2 + ci**2
+        gaus_val = np.exp(-x_vec/(2*sigma**2))
+        unscaled_kernel[d[vox], r[vox], c[vox]] = gaus_val
+    
+    sum_val = np.sum(unscaled_kernel)
+    print(f'--- INTEGRAL KERNEL: {sum_val}')
+    kernel = unscaled_kernel / sum_val
+    return kernel
+        
+    
+    
 def ComputeSubArrays(inputs, nb_depth_splits, nb_row_splits, nb_col_splits, operation):
     if operation == 'split':
         sub_arrs = np.array_split(inputs, nb_depth_splits, axis = 0)
@@ -152,7 +173,9 @@ def AdaptiveProcessingPixel(bone, segm, sphere, adaptive_method, CHUNKED_DATA):
                     elif adaptive_method == 'median':
                         local_thresh = np.median(tmp_part[sphere!=0])
                     elif adaptive_method == 'mean_min_max':
-                        local_thresh = 0.5*np.max(tmp_part) + 0.5*np.min(tmp_part)
+                        local_thresh = 0.5*np.max(tmp_part[sphere!=0]) + 0.5*np.min(tmp_part[sphere!=0])
+                    elif adaptive_method == 'gaussian':
+                        local_thresh = np.sum(sphere * tmp_part)
                     else:
                         raise ValueError(f'ERROR: invalid adaptive method selected! (input given is {adaptive_method})')
                     
@@ -179,7 +202,9 @@ def AdaptiveProcessingPixel(bone, segm, sphere, adaptive_method, CHUNKED_DATA):
                 elif adaptive_method == 'median':
                     local_thresh = np.median(tmp_part[tmp_part!=0])
                 elif adaptive_method == 'mean_min_max':
-                    local_thresh = 0.5*np.max(tmp_part) + 0.5*np.min(tmp_part)
+                    local_thresh = 0.5*np.max(tmp_part[sphere!=0]) + 0.5*np.min(tmp_part[sphere!=0])
+                elif adaptive_method == 'gaussian':
+                    local_thresh = np.sum(sphere * tmp_part)
                 else:
                     raise ValueError(f'ERROR: invalid adaptive method selected! (input given is {adaptive_method})')
                 
@@ -228,6 +253,7 @@ def SegmentOtsu(parameter_file = 'default', bone = None, mask = None, reference 
     # default parameters
     bone_file = ''
     mask_file = ''
+    output_folder = ''
     WRITE_LOG = 0
     WRITE_SEGMENTATION = 0
     PLOT_SEGMENTATION = 0
@@ -247,6 +273,8 @@ def SegmentOtsu(parameter_file = 'default', bone = None, mask = None, reference 
                             bone_file = value
                         elif param == 'mask_file':
                             mask_file = value
+                        elif param == 'output_folder':
+                            output_folder = value
                         elif param == 'nb_bins':
                             nb_bins = int(value)
                         elif param == 'WRITE_LOG':
@@ -263,11 +291,15 @@ def SegmentOtsu(parameter_file = 'default', bone = None, mask = None, reference 
             raise NameError(f'{parameter_file} is not a valid file.')
     
     if bone is None or mask is None:
+        filename = os.path.basename(bone_file).split('.')[0]
         print('Reading in image...')
         bone = sitk.ReadImage(bone_file)
         print('Reading in mask...')
         mask = sitk.ReadImage(mask_file)
     
+    if mask.GetPixelID() != 1:
+        mask = sitk.Cast(mask, sitk.sitkUInt8)
+
     if os.path.isfile(reference_file):
         print('Reading in reference image...')
         reference = sitk.ReadImage(reference_file)
@@ -283,7 +315,8 @@ def SegmentOtsu(parameter_file = 'default', bone = None, mask = None, reference 
     thresh = filt.GetThreshold()
 
     if WRITE_SEGMENTATION:
-        WriteSegmentation(segm, bone_file, 'Otsu')
+        output_file = os.path.join(output_folder, filename+'_segmOtsu.mha' )
+        WriteSegmentation(segm, output_file)
     
     if WRITE_LOG:
         if reference is None:
@@ -292,10 +325,10 @@ def SegmentOtsu(parameter_file = 'default', bone = None, mask = None, reference 
         else:
             dsc = DSC(segm, reference)
         
-        if bone_file == '':
-            print('ERROR: you want to write a log-file, but did not specify a bone_file path. Hence, I do not know where the data should be stored!')
+        if output_folder == '':
+            print('ERROR: you want to write a log-file, but did not specify a output directory. Hence, I do not know where the data should be stored!')
         else:
-            log_file = bone_file[:-4] + '_Otsu_log.txt'
+            log_file = os.path.join(output_folder, filename + '_Otsu_log.txt')
             log = open(log_file, 'a')
             
             log.write('OTSU SEGMENTATION LOG FILE \n')
@@ -331,6 +364,7 @@ def SegmentGMM(parameter_file = 'default', ADAPTIVE = True, bone = None, mask = 
     # default parameters
     bone_file =''
     mask_file =''
+    output_folder=''
     reference_file=''
     CALIBRATE_MODEL = True  
     REDUCED_SAMPLING = False 
@@ -368,6 +402,8 @@ def SegmentGMM(parameter_file = 'default', ADAPTIVE = True, bone = None, mask = 
                             bone_file = value
                         elif param == 'mask_file':
                             mask_file = value
+                        elif param == 'output_folder':
+                            output_folder = value
                         elif param == 'reference_file':
                             reference_file = value
                         elif param == 'CALIBRATE_MODEL':
@@ -416,10 +452,14 @@ def SegmentGMM(parameter_file = 'default', ADAPTIVE = True, bone = None, mask = 
             raise NameError(f'{parameter_file} is not a valid file.')
      
     if bone is None or mask is None:
+        filename = os.path.basename(bone_file).split('.')[0]
         print('Reading in image...')
         bone = sitk.ReadImage(bone_file)
         print('Reading in mask...')
         mask = sitk.ReadImage(mask_file)
+        if output_folder == '':
+            output_folder = os.path.dirname(bone_file)
+            print(f"WARNING: no output directory for given. Using {output_folder}")
     
     if os.path.isfile(reference_file):
         print('Reading in reference image...')
@@ -429,7 +469,7 @@ def SegmentGMM(parameter_file = 'default', ADAPTIVE = True, bone = None, mask = 
     mask_arr = sitk.GetArrayViewFromImage(mask)
     
     if WRITE_LOG:
-        log_string = bone_file[:-4] + '_GMM_log.txt'
+        log_string = os.path.join(output_folder, filename + '_GMM_log.txt')
         log = open(log_string, 'a')
         log.write('GAUSSIAN MIXTURE MODEL SEGMENTATION LOG FILE \n')
         now = datetime.datetime.now()
@@ -444,7 +484,7 @@ def SegmentGMM(parameter_file = 'default', ADAPTIVE = True, bone = None, mask = 
     # calibrate model
     if CALIBRATE_MODEL:
         if WRITE_LOG: log.write('Calibrating model...\n')
-        param_string = bone_file[:-4] + '_GMM_parameters.txt'
+        param_string = os.path.join(output_folder, filename + '_GMM_parameters.txt')
         GMMparams = open(param_string, 'w')
         
         (fov_z, fov_r, fov_c) = np.where(mask_arr != 0)
@@ -639,7 +679,7 @@ def SegmentGMM(parameter_file = 'default', ADAPTIVE = True, bone = None, mask = 
         if mean_bone is None or mean_soft is None or sd_bone is None or sd_soft is None \
             or prior_bone is None or prior_soft is None:
                 try:
-                    GMMstring = bone_file[:-4]+'_GMM_parameters.txt'
+                    GMMstring = os.path.join(output_folder, filename+'_GMM_parameters.txt')
                     with open(GMMstring, 'r') as f:
                         print('Reading in model parameters...')
                         for line in f:
@@ -723,6 +763,8 @@ def SegmentGMM(parameter_file = 'default', ADAPTIVE = True, bone = None, mask = 
         # create sphere for adaptive local region
         (dx, dy, dz) = bone.GetSpacing()
         sphere = CreateSphere(dx, dy, dz, radius)
+        if adaptive_method == 'gaussian':
+            sphere = CreateGaussianKernel(sphere)
         
         print('Dividing the arrays into chunks for multiprocessing...')
         # divide arrays into smaller pieces to enable multiprocessing
@@ -762,10 +804,10 @@ def SegmentGMM(parameter_file = 'default', ADAPTIVE = True, bone = None, mask = 
     segm_GMM.SetOrigin(bone.GetOrigin())
     
     if WRITE_SEGMENTATION:
-        if ADAPTIVE: method = 'GMMadaptive'
-        else: method = 'GMM'
+        if ADAPTIVE: output = os.path.join(output_folder, filename +'_segmGMMadaptive.mha')
+        else: output = os.path.join(output_folder, filename +'_segmGMM.mha')
         if WRITE_LOG: log.write('Writing image...\n')
-        WriteSegmentation(segm_GMM, bone_file, method)
+        WriteSegmentation(segm_GMM, output)
     
     if WRITE_LOG: 
         if reference is None:
@@ -795,6 +837,7 @@ def SegmentAdaptive(parameter_file = 'default', bone = None, mask = None, refere
     bone_file = ''
     mask_file = ''
     reference_file = ''
+    output_folder = ''
     radius = 0.1 # mm
     adaptive_method = 'mean'
     WRITE_LOG = 0
@@ -815,6 +858,8 @@ def SegmentAdaptive(parameter_file = 'default', bone = None, mask = None, refere
                             bone_file = value
                         elif param == 'mask_file':
                             mask_file = value
+                        elif param == 'output_folder':
+                            output_folder = value
                         elif param == 'reference_file':
                             reference_file = value
                         elif param == 'radius':
@@ -835,10 +880,14 @@ def SegmentAdaptive(parameter_file = 'default', bone = None, mask = None, refere
             raise NameError(f'{parameter_file} is not a valid file.')
                         
     if bone is None or mask is None:
+        filename = os.path.basename(bone_file).split('.')[0]
         print('Reading in image...')
         bone = sitk.ReadImage(bone_file)
         print('Reading in mask...')
         mask = sitk.ReadImage(mask_file)
+        if output_folder == '':
+            output_folder = os.path.dirname(bone_file)
+            print(f"WARNING: no output directory for given. Using {output_folder}")
     
     if os.path.isfile(reference_file):
         print('Reading in reference image...')
@@ -857,6 +906,8 @@ def SegmentAdaptive(parameter_file = 'default', bone = None, mask = None, refere
     #create a sphere with 1s 
     [dx, dy, dz] = bone.GetSpacing()
     sphere = CreateSphere(dx, dy, dz, radius)
+    if adaptive_method == 'gaussian':
+        sphere = CreateGaussianKernel(sphere)
        
     # switch to array implementation
     bone_arr = sitk.GetArrayViewFromImage(bone)
@@ -913,7 +964,8 @@ def SegmentAdaptive(parameter_file = 'default', bone = None, mask = None, refere
     
     
     if WRITE_SEGMENTATION:
-        WriteSegmentation(segm, bone_file, 'Adaptive')
+        output = os.path.join(output_folder, filename + '_segmAdaptive.mha')
+        WriteSegmentation(segm, output)
     
     if WRITE_LOG:
         if reference is None:
@@ -921,26 +973,23 @@ def SegmentAdaptive(parameter_file = 'default', bone = None, mask = None, refere
             dsc = 'unknown'
         else:
             dsc = DSC(segm, reference)
+ 
+        log_file = os.path.join(output_folder, filename + '_Adaptive_log.txt')
+        log = open(log_file, 'a')
         
-        if bone_file == '':
-            print('ERROR: you want to write a log-file, but did not specify a bone_file path. Hence, I do not know where the data should be stored!')
-        else:
-            log_file = bone_file[:-4] + '_Adaptive_log.txt'
-            log = open(log_file, 'a')
-            
-            log.write('ADAPTIVE SEGMENTATION LOG FILE \n')
-            now = datetime.datetime.now()
-            log.write(f'{now}\n\n')
-            log.write('-- PARAMETER FILE --\n\n')
-            with open(parameter_file, 'r') as f:
-                for line in f:
-                    log.write(line)
-            log.write('\n\n')
-            log.write('--- END OF PARAMETER FILE ---\n\n')
-            log.write(f'Segmentation took {duration} seconds\n')
-            log.write(f'DSC: {dsc}')
-            log.close()
-            
+        log.write('ADAPTIVE SEGMENTATION LOG FILE \n')
+        now = datetime.datetime.now()
+        log.write(f'{now}\n\n')
+        log.write('-- PARAMETER FILE --\n\n')
+        with open(parameter_file, 'r') as f:
+            for line in f:
+                log.write(line)
+        log.write('\n\n')
+        log.write('--- END OF PARAMETER FILE ---\n\n')
+        log.write(f'Segmentation took {duration} seconds\n')
+        log.write(f'DSC: {dsc}')
+        log.close()
+        
     if PLOT_SEGMENTATION:
         PlotSegmentation([bone_arr, segm_arr], ['image', f'Adaptive segmentation - {adaptive_method} method'])
     
@@ -971,6 +1020,7 @@ def main():
         print("--------------------------------------------------------------------")
         print("{:<25} | {d}".format("bone_file",d="Link to gray image volume to be segmented"))
         print("{:<25} | {d}".format("mask_file",d="Link to black/white mask file. Standard input is 8bit Uint"))
+        print("{:<25} | {d}".format("output_folder",d="Folder to store segmentations and log files"))
         print("{:<25} | {d}".format("nb_bins",d="Number of bins in the histogram for the Otsu method")) 
         print("{:<25} | {d}".format("WRITE_LOG",d="1/0. Write a log file, including the used parameter file, otsu threshold and the Dice Similarity of the scan to a reference image"))
         print("{:<25} | {d}".format("WRITE_SEGMENTATION",d="1/0. Write a the segmented image as an mha file. The file is named as the input image, with `segmOtsu` appended"))
@@ -984,8 +1034,9 @@ def main():
         print("--------------------------------------------------------------------")
         print("{:<25} | {d}".format("bone_file",d="Link to gray image volume to be segmented"))
         print("{:<25} | {d}".format("mask_file",d="Link to black/white mask file. Standard input is 8bit Uint"))
+        print("{:<25} | {d}".format("output_folder",d="Folder to store segmentations and log files"))
         print("{:<25} | {d}".format("radius",d="Radius of sphere to calculate local threshold, expressed in milimeters")) 
-        print("{:<25} | {d}".format("ADAPTIVE_METHOD",d="mean, median or mean_min_max")) 
+        print("{:<25} | {d}".format("ADAPTIVE_METHOD",d="gaussian, mean, median or mean_min_max")) 
         print("{:<25} | {d}".format("MULTIPROCESSING",d="use multiprocessing for increased computational speed. (uses overhead so only usefull for large matrix sizes)")) 
         print("{:<25} | {d}".format("WRITE_LOG",d="1/0. Write a log file, including the used parameter file and the Dice Similarity of the scan to a reference image"))
         print("{:<25} | {d}".format("WRITE_SEGMENTATION",d="1/0. Write a the segmented image as an mha file. The file is named as the input image, with `segmAdatpive` appended"))
@@ -998,6 +1049,7 @@ def main():
         print("--------------------------------------------------------------------")
         print("{:<25} | {d}".format("bone_file",d="Link to gray image volume to be segmented"))
         print("{:<25} | {d}".format("mask_file",d="Link to black/white mask file. Standard input is 8bit Uint"))
+        print("{:<25} | {d}".format("output_folder",d="Folder to store segmentations and log files"))
         print("{:<25} | {d}".format("nb_bins",d="number of histogram bins the Gaussian functions will model"))
         print("{:<25} | {d}".format("max_iterations",d="maximum iterations of log likelihood maximization"))
         print("{:<25} | {d}".format("epsilon",d="Convergence criterion: iteration stopped if L_n - L_n-1 < epsilon"))
@@ -1006,7 +1058,7 @@ def main():
         print("{:<25} | {d}".format("REDUCED_SAMPLING",d="1/0. Whether or not to estimate GMM with reduced number of voxels in FOV (mask)"))
         print("{:<25} | {d}".format("nb_samples",d="number of samples if reduced sampling mode is on"))
         print("{:<25} | {d}".format("ADAPTIVE",d="1/0. Whether or not to use adaptive thresholding in the uncertain voxels"))
-        print("{:<25} | {d}".format("ADAPTIVE_METHOD",d="gaussian, mean, median or mean_min_max"))
+        print("{:<25} | {d}".format("ADAPTIVE_METHOD",d="gaussian, mean, median, mean_min_max"))
         print("{:<25} | {d}".format("radius",d="Radius of sphere to calculate local threshold, expressed in milimeters")) 
         print("{:<25} | {d}".format("certain_bone_fact",d="Bone voxel is uncertain if Pbone < factor * Psoft")) 
         print("{:<25} | {d}".format("certain_soft_fact",d="Non-bone voxel is uncertain if Psoft < factor * Pbone")) 
