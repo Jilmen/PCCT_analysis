@@ -120,7 +120,6 @@ def CreateGaussianKernel(sphere):
         unscaled_kernel[d[vox], r[vox], c[vox]] = gaus_val
     
     sum_val = np.sum(unscaled_kernel)
-    print(f'--- INTEGRAL KERNEL: {sum_val}')
     kernel = unscaled_kernel / sum_val
     return kernel
         
@@ -175,7 +174,7 @@ def AdaptiveProcessingPixel(bone, segm, sphere, adaptive_method, CHUNKED_DATA):
                     elif adaptive_method == 'mean_min_max':
                         local_thresh = 0.5*np.max(tmp_part[sphere!=0]) + 0.5*np.min(tmp_part[sphere!=0])
                     elif adaptive_method == 'gaussian':
-                        local_thresh = np.sum(sphere * tmp_part)
+                        local_thresh = np.sum(tmp_part) # the sphere is not boolean, but a discretized kernel
                     else:
                         raise ValueError(f'ERROR: invalid adaptive method selected! (input given is {adaptive_method})')
                     
@@ -204,7 +203,7 @@ def AdaptiveProcessingPixel(bone, segm, sphere, adaptive_method, CHUNKED_DATA):
                 elif adaptive_method == 'mean_min_max':
                     local_thresh = 0.5*np.max(tmp_part[sphere!=0]) + 0.5*np.min(tmp_part[sphere!=0])
                 elif adaptive_method == 'gaussian':
-                    local_thresh = np.sum(sphere * tmp_part)
+                    local_thresh = np.sum(tmp_part)
                 else:
                     raise ValueError(f'ERROR: invalid adaptive method selected! (input given is {adaptive_method})')
                 
