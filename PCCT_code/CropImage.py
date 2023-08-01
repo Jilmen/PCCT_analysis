@@ -173,8 +173,8 @@ def CropImage(image, roi, margin):
     min_y, max_y = np.min(rows), np.max(rows)
     min_z, max_z = np.min(depths), np.max(depths)
     
-    (dx, dy, dz) = image.GetSpacing()
-    (sx, sy, sz) = image.GetSize()
+    (dx, dy, dz) = roi.GetSpacing()
+    (sx, sy, sz) = roi.GetSize()
     
     Dx = np.ceil(margin/dx)
     Dy = np.ceil(margin/dy)
@@ -187,8 +187,11 @@ def CropImage(image, roi, margin):
     max_y = int(min(sy - 1, max_y + Dy))
     max_z = int(min(sz - 1, max_z + Dz))
     
-    image_crop = image[min_x:max_x, min_y:max_y, min_z:max_z]
     roi_crop = roi[min_x:max_x, min_y:max_y, min_z:max_z]
+    cropx, cropy, cropz = roi_crop.GetSize()
+    ox, oy, oz = roi_crop.TransformIndexToPhysicalPoint((0,0,0))
+    ix, iy, iz = image.TransformPhysicalPointToIndex((ox,oy,oz))
+    image_crop = image[ix:ix+cropx, iy:iy+cropy, iz:iz+cropz]
 
     return image_crop, roi_crop
     
@@ -200,7 +203,7 @@ def main():
     parser.add_argument('-image', help='input image to be cropped', required = True)
     parser.add_argument('-manual', help='manually select a boundary box in the image. You only have to provide the input image and output image name', action='store_true', default=False)
     parser.add_argument('-manual_oversized', help='same as manual mode, but original image dimensions are preserved and padded with zeros', action='store_true', default=False)
-    parser.add_argument('-mask', help='region of interest. Dimensions should match the image. You can enter multiple ROIs, but give the same amount of output names', nargs='+')
+    parser.add_argument('-mask', help='Region of interest. (Overlap based on physical coordinates). You can enter multiple ROIs, but give the same amount of output names', nargs='+')
     parser.add_argument('-margin', help='Margin beyond the extrema of the region of interest to crop. Should be specified in milimeters.', default=10)
     parser.add_argument('-outImg', help='Name of output image. You can choose to specify a full path or just a filename.'\
                                         'In case of the latter, the files will be written in the same folder as the inputs', nargs='+')
