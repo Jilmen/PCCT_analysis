@@ -163,10 +163,10 @@ def TrabecularMask(image_arr, mask_arr):
 def main():
     parser = argparse.ArgumentParser(description='implementation of multiple morphology based binary operations, implemented in numpy and scipy.ndimage')
     parser.add_argument('-image', help='path to input (gray) image', default='')
-    parser.add_argument('-init_thresh', help='initial threshold before binary operations start', default='0')
+    parser.add_argument('-init_thresh', type=int, help='initial threshold before binary operations start', default=0)
     parser.add_argument('-operation', help='which morphology algorithm to perform', default='')
-    parser.add_argument('-closing_vox', help='number of voxels for the closing operation in the binary mask algorithm', default=None)
-    parser.add_argument('-despeckle_vox', help='maximum voxel size for despeckle operation', default=None)
+    parser.add_argument('-closing_vox', help='number of voxels for the closing operation in the binary mask algorithm', type=int, default=None)
+    parser.add_argument('-despeckle_vox', help='maximum voxel size for despeckle operation', type=int, default=None)
     parser.add_argument('-bone_mask', help='Full bone mask as input for the trabeculmar voi algorithm. If not passed along, you should specify the closing voxels', default=None)
     parser.add_argument('-out', help = 'output file name', default='C:/workdir/morphology.mha')
     parser.add_argument('-list', help='list all implemented operations', action='store_true')
@@ -180,6 +180,7 @@ def main():
         print("{:<25} | {d}".format("mask",d="Full bone mask with closing and filling"))
         print("{:<25} | {d}".format("despeckle",d="Remove white speckles with maximum size"))
         print("{:<25} | {d}".format("despeckle_mask",d="Consecutively perform despeckling and full bone masking"))
+        print("{:<25} | {d}".format("sweep",d="Remove all but the largest object"))
         print("{:<25} | {d}".format("trab_voi",d="Trabecular VOI. You can give a full bone mask, or the parameters for the `despeckle_mask`procedure"))
 
         sys.exit(0)
@@ -195,8 +196,8 @@ def main():
         if args.closing_vox == None:
             raise RuntimeError(f'Masking algorithm: missing input. closing_vox = {args.closing_vox}')
         
-        vox = np.uint8(args.closing_vox)
-        thresh = np.uint8(args.init_thresh)
+        vox = args.closing_vox
+        thresh = args.init_thresh
         if thresh == 0:
             print('WARNING: no threshold given as input. Using default 100')
             thresh = 100
@@ -218,9 +219,9 @@ def main():
         if args.closing_vox == None or args.despeckle_vox == None:
             raise RuntimeError(f'Despeckle and mask algorithm: missing input. closing_vox = {args.closing_vox} ; despeckle_vox = {args.despeckle_vox}')
         
-        closing_vox = np.uint8(args.closing_vox)
-        despeckle_vox = np.uint8(args.despeckle_vox)
-        thresh = np.uint8(args.init_thresh)
+        closing_vox = args.closing_vox
+        despeckle_vox = args.despeckle_vox
+        thresh = args.init_thresh
         if thresh == 0:
             print('WARNING: no threshold given as input. Using default 100')
             thresh = 100
@@ -245,8 +246,8 @@ def main():
         if  args.despeckle_vox == None:
             raise RuntimeError(f'Despeckle : missing input. despeckle_vox = {args.despeckle_vox}')
         
-        despeckle_vox = np.uint8(args.despeckle_vox)
-        thresh = np.uint8(args.init_thresh)
+        despeckle_vox = args.despeckle_vox
+        thresh = args.init_thresh
         if thresh == 0:
             print('WARNING: no threshold given as input. Using default 100')
             thresh = 100
@@ -266,7 +267,7 @@ def main():
         sitk.WriteImage(mask, args.out)
         
     elif args.operation == 'trab_voi':
-        thresh = np.uint8(args.init_thresh)
+        thresh = args.init_thresh
         if thresh == 0:
             print('WARNING: no threshold given as input. Using default 100')
             thresh = 100
@@ -294,11 +295,25 @@ def main():
         
         print('Writing image...')
         sitk.WriteImage(voi, args.out)
-        
-        
-        
-        
+    
+    elif args.operation == 'sweep':
+        thresh = args.init_thresh
+        if thresh == 0:
+            print('WARNING: no threshold given as input. Using default 100')
+            thresh = 100
             
+        print('thresholding...')
+        image_arr = sitk.GetArrayFromImage(im)
+        image_arr = SingleThreshold(image_arr, thresh)
+        
+        sweep_arr = Sweep(image_arr)
+        sweep_arr = 255*sweep_arr.astype(np.uint8)
+        sweep = sitk.GetImageFromArray(sweep_arr)
+        sweep.SetOrigin(im.GetOrigin())
+        sweep.SetSpacing(im.GetSpacing())
+        
+        print('Writing image...')
+        sitk.WriteImage(sweep, args.out) 
             
     else:
         print(f'WARNING: {args.operation} is not a valid operation. Exitting script without further operations...')

@@ -227,7 +227,7 @@ def CalculateLogLikelihood(intensities, mu1, sd1, prior1, mu2, sd2, prior2):
 
     P = prior1 * Gaussian(intensities, mu1, sd1) + prior2 * Gaussian(intensities, mu2, sd2)
     L = np.log(P)
-    return np.sum(L)
+    return np.sum(L) / len(intensities)
 
 def CalculatePosteriorProbabilities(intensities, mu1, sd1, prior1, mu2, sd2, prior2):
     g1 = Gaussian(intensities, mu1, sd1)
@@ -373,7 +373,7 @@ def SegmentGMM(parameter_file = 'default', ADAPTIVE = True, bone = None, mask = 
     certain_soft_fact = 2      
     nb_bins = 128           
     max_iterations = 20            
-    eps = 20                      
+    eps = 1e-4
     nb_samples = 700000
     
     mean_bone = None
@@ -424,7 +424,7 @@ def SegmentGMM(parameter_file = 'default', ADAPTIVE = True, bone = None, mask = 
                         elif param == 'max_iterations':
                             max_iterations = int(value)
                         elif param == 'epsilon':
-                            eps = int(value)
+                            eps = float(value)
                         elif param == 'nb_samples':
                             nb_samples = int(value)
                         elif param == 'mean_bone':
@@ -544,7 +544,7 @@ def SegmentGMM(parameter_file = 'default', ADAPTIVE = True, bone = None, mask = 
                                                                 mean_soft, sd_soft, prior_soft) 
         
         end = time.time()
-        string = f'Model initialization done ({round(end-start,2)} seconds).\nInitial log-likelihood: {round(likelihood)}'
+        string = f'Model initialization done ({round(end-start,2)} seconds).\nInitial log-likelihood: {round(likelihood,5)}'
         print(string)
         print('GMM initialization: parameters')
         print('---------------')
@@ -603,7 +603,7 @@ def SegmentGMM(parameter_file = 'default', ADAPTIVE = True, bone = None, mask = 
                                                                     mean_soft, sd_soft, prior_soft) 
             iteration += 1
             CONVERGED = abs(likelihood - likelihood_old) < eps
-            string = f'Iteration {iteration}: Diff = {round(likelihood-likelihood_old)} (L = {round(likelihood)})'
+            string = f'Iteration {iteration}: Diff = {round(likelihood-likelihood_old, 5)} (L = {round(likelihood, 5)})'
             print(string)
             if WRITE_LOG: log.write(string + '\n')
         
@@ -1052,8 +1052,8 @@ def main():
         print("{:<25} | {d}".format("nb_bins",d="number of histogram bins the Gaussian functions will model"))
         print("{:<25} | {d}".format("max_iterations",d="maximum iterations of log likelihood maximization"))
         print("{:<25} | {d}".format("epsilon",d="Convergence criterion: iteration stopped if L_n - L_n-1 < epsilon"))
+        print("{:<25} | {d}".format("epsilon_percentage",d="convergence criterion expressed as percentage of initial LogLikelihood. Has priority over epsilon"))
         print("{:<25} | {d}".format("CALIBRATE_MODEL",d="1/0. Whether or not program calculates GMM parameters, or directly segments the bone with the already calculated GMM parameters." ))
-        print("{:<25} | {d}".format(" ",d="If True, the parameters are stored in a txt file. If False, the txt file with parameters has to exist." ))                                    
         print("{:<25} | {d}".format("REDUCED_SAMPLING",d="1/0. Whether or not to estimate GMM with reduced number of voxels in FOV (mask)"))
         print("{:<25} | {d}".format("nb_samples",d="number of samples if reduced sampling mode is on"))
         print("{:<25} | {d}".format("ADAPTIVE",d="1/0. Whether or not to use adaptive thresholding in the uncertain voxels"))
