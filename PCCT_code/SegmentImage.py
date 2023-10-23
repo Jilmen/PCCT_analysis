@@ -839,6 +839,7 @@ def SegmentAdaptive(parameter_file = 'default', bone = None, mask = None, refere
     output_folder = ''
     radius = 0.1 # mm
     adaptive_method = 'mean'
+    init_threshold = 'low'
     WRITE_LOG = 0
     WRITE_SEGMENTATION = 0
     PLOT_SEGMENTATION = 0
@@ -865,6 +866,8 @@ def SegmentAdaptive(parameter_file = 'default', bone = None, mask = None, refere
                             radius = float(value)
                         elif param == 'ADAPTIVE_METHOD':
                             adaptive_method = value
+                        elif param == 'INIT_THRESHOLD':
+                            init_threshold = value
                         elif param == 'MULTIPROCESSING':
                             MULTIPROCESSING = bool(int(value))
                         elif param == 'WRITE_SEGMENTATION':
@@ -892,19 +895,25 @@ def SegmentAdaptive(parameter_file = 'default', bone = None, mask = None, refere
         print('Reading in reference image...')
         reference = sitk.ReadImage(reference_file)
         
+    if init_threshold not in ('low', 'high'):
+        print(f"WARNING: invalid input for initial segmentation threshold (enter with low or high). Using < low >")
+        init_threshold = 'low'
+        
     # Rough segmentation
     (_, thresh) = SegmentOtsu(bone = bone, mask = mask)
-    thresh = int(thresh/2)
+    thresh = int(thresh*1.2) if init_threshold == 'high' else int(thresh/2)
     filt = sitk.BinaryThresholdImageFilter()
     filt.SetLowerThreshold(thresh)
     filt.SetUpperThreshold(32767) #assuming the 16int datatype
     filt.SetInsideValue(255)
     filt.SetOutsideValue(0)
     segm_init = filt.Execute(bone)
-    
+
     #create a sphere with 1s 
     [dx, dy, dz] = bone.GetSpacing()
     sphere = CreateSphere(dx, dy, dz, radius)
+    print(f'initial threshold: {thresh}')
+    print(f'sphere shape: {sphere.shape}')
     if adaptive_method == 'gaussian':
         sphere = CreateGaussianKernel(sphere)
        
@@ -913,12 +922,14 @@ def SegmentAdaptive(parameter_file = 'default', bone = None, mask = None, refere
     mask_arr = sitk.GetArrayViewFromImage(mask)
     segm_arr = sitk.GetArrayFromImage(segm_init)
     
-    # masking the segmentation
     # MAKE SURE THE MASK IS COMPLETE!!! (TOO LARGE IS NOT A PROBLEM, TOO SMALL AND YOU'LL LOSE BONE VOXELS)
-    segm_arr = segm_arr * (mask_arr != 0)  
+
     # extend segm_arr to a fourth dimension with labels indicating if value is treated
     # (True indicates that no further investigation is required)
-    labels = segm_arr == 0
+    if init_threshold == 'high':
+        labels = ((segm_arr > 0) + (mask_arr == 0)).astype(bool)
+    else: #init_threshold == low
+        labels = ((segm_arr == 0) + (mask_arr == 0)).astype(bool)
     segm_arr = np.stack([segm_arr, labels], axis=-1)
     
     if MULTIPROCESSING:
@@ -957,6 +968,7 @@ def SegmentAdaptive(parameter_file = 'default', bone = None, mask = None, refere
     duration = round(stop_time-start_time,2)
     print(f'Processing took {duration} seconds')
     
+    segm_arr = segm_arr * (mask_arr != 0)
     segm = sitk.GetImageFromArray(segm_arr)
     segm.SetOrigin(segm_init.GetOrigin())
     segm.SetSpacing(segm_init.GetSpacing())
@@ -1036,6 +1048,7 @@ def main():
         print("{:<25} | {d}".format("output_folder",d="Folder to store segmentations and log files"))
         print("{:<25} | {d}".format("radius",d="Radius of sphere to calculate local threshold, expressed in milimeters")) 
         print("{:<25} | {d}".format("ADAPTIVE_METHOD",d="gaussian, mean, median or mean_min_max")) 
+        print("{:<25} | {d}".format("INIT_THRESHOLD",d="Enter with \"high\" or \"low\".For high, certain bone will be segmented and all the background will be segmented adaptive. For low, certain background will be skipped and bone will be adaptively segmented")) 
         print("{:<25} | {d}".format("MULTIPROCESSING",d="use multiprocessing for increased computational speed. (uses overhead so only usefull for large matrix sizes)")) 
         print("{:<25} | {d}".format("WRITE_LOG",d="1/0. Write a log file, including the used parameter file and the Dice Similarity of the scan to a reference image"))
         print("{:<25} | {d}".format("WRITE_SEGMENTATION",d="1/0. Write a the segmented image as an mha file. The file is named as the input image, with `segmAdatpive` appended"))
